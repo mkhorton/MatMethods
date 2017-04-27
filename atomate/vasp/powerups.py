@@ -484,3 +484,63 @@ def use_gamma_vasp(original_wf, gamma_vasp_cmd):
     for idx_fw, idx_t in get_fws_and_tasks(original_wf, task_name_constraint="RunVaspCustodian"):
         wf_dict["fws"][idx_fw]["spec"]["_tasks"][idx_t]["gamma_vasp_cmd"] = gamma_vasp_cmd
     return Workflow.from_dict(wf_dict)
+    
+def get_wfs_for_convergence(original_wf, property_to_vary, property_iterable, task_name_constraint=None):
+    """
+    Takes a Workflow and generates a list of Workflows for convergence
+    testing and adds Firework tags and additional fields to taskdocs to
+    make tracking easier.
+
+    Requires knowledge of your Workflow spec! Unlikely to do what you
+    want otherwise. Property must be defined in the spec, e.g. if you
+    want to vary ENCUT, make sure you include an argument
+    {"user_incar_settings":{}} when constructing the original_wf.
+
+    Examples:
+
+        * to converge reciprocal density in a NonSCF run, use:
+          property_to_vary=["reciprocal_density"]
+          property_iterable=range(100, 5000, 800)
+          task_name_constraint="VaspNSCFFromPrev"
+
+        * to converge ENCUT, use:
+          property_to_vary=["vasp_input_set", "user_incar_settings", "ENCUT"]
+          property_iterable=range(300, 1500, 200)
+          task_name_constraint="WriteVaspFromIOSet"
+
+    :param original_wf:
+    :param property_to_vary: list of dictionary keys to access property
+    to converge
+    :param property_iterable: iterable object containing guessed values
+    of convergence property (recommend at least 5)
+    :param task_name_constraint: task name containing property to
+    converge
+    :param target_property: (not used at present) target property for
+    convergence to be extracted from taskdoc
+    :return: list of Workflows
+    """
+    wf_dict = original_wf.to_dict()
+    wfs = []
+    tags = ["convergence", "convergence_property:{}".format(property_to_vary)]
+    for property_value in property_iterable:
+        new_wf = wf_dict.copy()
+        for idx_fw, idx_t in get_fws_and_tasks(original_wf, task_name_constraint=task_name_constraint):
+
+            # somewhat convoluted way of setting properties within
+            # nested dictionaries
+            dict = new_wf["fws"][idx_fw]["spec"]["_tasks"][idx_t]
+            for key in property_to_vary[:-1]:
+                dict = dict[key]
+            dict[property_to_vary[-1]] = property_value
+
+        new_wf = Workflow.from_dict(new_wf)
+
+        # add metadata for easier tracking
+        add_tags(new_wf, ["convergence_run",
+                          "convergence_property:{}".format(property_to_vary),
+                          "convergence_property_value:{}".format(property_value)])
+        add_additional_fields_to_taskdocs(new_wf, update_dict={"convergence_run": True,
+                                                               "convergence_property": property_to_vary,
+                                                               "convergence_property_value": property_value})
+        wfs.append(new_wf)
+    return wfs
