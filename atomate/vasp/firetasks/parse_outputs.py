@@ -649,6 +649,89 @@ class ThermalExpansionCoeffToDb(FiretaskBase):
         logger.info("Thermal expansion coefficient calculation complete.")
 
 
+@explicit_serialize
+class MagneticDeformationToDB(FiretaskBase):
+    """
+    Retrieve the relaxed lattices  The summary dict
+    is written to 'magnetic_deformation.json' file or
+    added to a 'magetic_deformation' collection.
+
+    Required parameters:
+        uuid (str): unique tag so that all the required data can be
+                   queried directly from the database.
+        db_file (str): path to the db file
+
+    Optional parameters:
+    to_db (bool): if True, the data will be inserted to database,
+                  otherwise, will be dumped to a .json file.
+    """
+
+    # TODO: this is based on other ToDB tasks (specifically EOS)
+    # will likely change as magnetism_wf changes -mkhorton
+
+    required_params = ["db_file", "uuid"]
+    optional_params = ["to_db"]
+
+    def magnetic_deformation(nm_struct, m_struct):
+        """ Calculates 'magnetic deformation proxy',
+        a measure of deformation (norm of finite strain)
+        between 'non-magnetic' (non-spin-polarized) and
+        ferromagnetic structures.
+
+        Adapted from Bocarsly et al. 2017,
+        doi: 10.1021/acs.chemmater.6b04729"""
+        import numpy as np
+        lmn = nm_struct.lattice.matrix.T
+        lm = m_struct.lattice.matrix.T
+        lmn_i = np.linalg.inv(lmn)
+        p = np.dot(lmn_i, lm)
+        eta = 0.5 * (np.dot(p.T, p) - np.identity(3))
+        w, v = np.linalg.eig(eta)
+        deformation = 100 * (1. / 3.) * np.sqrt(w[0] ** 2 + w[1] ** 2 + w[2] ** 2)
+        return deformation
+
+    def run_task(self, fw_spec):
+
+        uuid = self["uuid"]
+        db_file = env_chk(self.get("db_file"), fw_spec)
+        summary_dict = {}
+        to_db = self.get("to_db", True)
+
+        mmdb = VaspCalcDb.from_db_file(db_file, admin=True)
+
+        # get the non-magnetic structure
+        d = mmdb.collection.find_one({"task_label": "magnetic deformation relax non-magnetic",
+                                      "additional_fields.tags": uuid})
+        nm_structure = Structure.from_dict(d["calcs_reversed"][0]["output"]['structure'])
+        summary_dict["non_magnetic_task_id"] = d["task_id"]
+        summary_dict["non_magnetic_structure"] = nm_structure.as_dict()
+
+        # get the magnetic structure
+        d = mmdb.collection.find_one({"task_label": "magnetic deformation relax magnetic",
+                                      "additional_fields.tags": uuid})
+        m_structure = Structure.from_dict(d["calcs_reversed"][0]["output"]['structure'])
+        summary_dict["magnetic_task_id"] = d["task_id"]
+        summary_dict["magnetic_structure"] = m_structure.as_dict()
+
+        # calculate magnetic deformation
+        summary_dict["magnetic_deformation"] = self.magnetic_deformation(nm_structure, m_structure)
+
+        # TODO: find a better way for passing tags of the entire workflow to db - albalu
+        if fw_spec.get("tags", None):
+            summary_dict["tags"] = fw_spec["tags"]
+        summary_dict["created_at"] = datetime.utcnow()
+
+        # db_file itself is required but the user can choose to pass the results to db or not
+        if to_db:
+            mmdb.collection = mmdb.db["magnetic_deformation"]
+            mmdb.collection.insert_one(summary_dict)
+        else:
+            with open("magnetic_deformation.json", "w") as f:
+                f.write(json.dumps(summary_dict, default=DATETIME_HANDLER))
+
+        logger.info("Magnetic deformation calculation complete.")
+
+
 # the following definitions for backward compatibility
 class VaspToDbTask(VaspToDb):
     pass
