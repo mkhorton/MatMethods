@@ -22,15 +22,14 @@ def get_wf_magnetic_deformation(structure, c=None):
     :param structure: input structure, must be structure with magnetic
     elements, such that pymatgen will initalize ferromagnetic input by
     default -- see MPRelaxSet.yaml for list of default elements
-    :param db_file: path to db file, or will write to .json if None
-    :param tag (str): (optional) tag to keep track of calculations
-    :param kwargs: kwargs to pass to get_wf
+    :param c (dict): Workflow config dict, in the same format as in
+    presets/core.py
     :return:
     """
     # TODO: when MagneticStructureAnalyzer is committed to pymatgen,
     # will add a default_magmoms kwarg to this method -mkhorton
     structure = structure.get_primitive_structure()
-    uuid = uuid.uuid4()  # unique tag to keep track of calculation
+    uuid_tag = str(uuid.uuid4())  # unique tag to keep track of calculation
 
     c = c or {}
     vasp_cmd = c.get("VASP_CMD", VASP_CMD)
@@ -38,10 +37,12 @@ def get_wf_magnetic_deformation(structure, c=None):
 
     wf = get_wf(structure, "magnetic_deformation.yaml", vis=MPRelaxSet(structure),
                 common_params={"vasp_cmd": vasp_cmd, "db_file": db_file})
-    wf = add_tags(wf, [uuid])
+    wf = add_tags(wf, [uuid_tag])
+    wf = add_additional_fields_to_taskdocs(wf, {'magnetic_deformation_wf_uuid': uuid_tag})
 
     fw_analysis = Firework(MagneticDeformationToDB(db_file=db_file,
-                                                   uuid=uuid),
+                                                   uuid=uuid_tag,
+                                                   to_db=c.get("to_db", True)),
                            name="Calculate magnetic deformation")
     wf.append_wf(Workflow.from_Firework(fw_analysis), wf.leaf_fw_ids)
 

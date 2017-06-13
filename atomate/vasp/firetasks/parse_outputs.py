@@ -701,14 +701,14 @@ class MagneticDeformationToDB(FiretaskBase):
 
         # get the non-magnetic structure
         d = mmdb.collection.find_one({"task_label": "magnetic deformation relax non-magnetic",
-                                      "additional_fields.tags": uuid})
+                                      "additional_fields.magnetic_deformation_wf_uuid": uuid})
         nm_structure = Structure.from_dict(d["calcs_reversed"][0]["output"]['structure'])
         summary_dict["non_magnetic_task_id"] = d["task_id"]
         summary_dict["non_magnetic_structure"] = nm_structure.as_dict()
 
         # get the magnetic structure
         d = mmdb.collection.find_one({"task_label": "magnetic deformation relax magnetic",
-                                      "additional_fields.tags": uuid})
+                                      "additional_fields.magnetic_deformation_wf_uuid": uuid})
         m_structure = Structure.from_dict(d["calcs_reversed"][0]["output"]['structure'])
         summary_dict["magnetic_task_id"] = d["task_id"]
         summary_dict["magnetic_structure"] = m_structure.as_dict()
