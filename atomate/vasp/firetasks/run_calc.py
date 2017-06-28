@@ -77,6 +77,7 @@ class RunVaspCustodian(FiretaskBase):
             Supports env_chk.
         gzip_output: (bool) - gzip output (default=T)
         max_errors: (int) - maximum # of errors to fix before giving up (default=5)
+        max_errors_per_job: (int) - maximum # of errors to fix per job before giving up (default=max_errors)
         ediffg: (float) shortcut for setting EDIFFG in special custodian jobs
         auto_npar: (bool) - use auto_npar (default=F). Recommended set to T
             for single-node jobs only. Supports env_chk.
@@ -87,7 +88,7 @@ class RunVaspCustodian(FiretaskBase):
     required_params = ["vasp_cmd"]
     optional_params = ["job_type", "handler_group", "max_force_threshold", "scratch_dir",
                        "gzip_output", "max_errors", "ediffg", "auto_npar", "gamma_vasp_cmd",
-                       "wall_time"]
+                       "wall_time", "max_errors_per_job"]
 
     def run_task(self, fw_spec):
 
@@ -114,6 +115,7 @@ class RunVaspCustodian(FiretaskBase):
         scratch_dir = env_chk(self.get("scratch_dir"), fw_spec)
         gzip_output = self.get("gzip_output", True)
         max_errors = self.get("max_errors", 5)
+        max_errors_per_job = self.get("max_errors_per_job", max_errors)
         auto_npar = env_chk(self.get("auto_npar"), fw_spec, strict=False, default=False)
         gamma_vasp_cmd = env_chk(self.get("gamma_vasp_cmd"), fw_spec, strict=False, default=None)
         if gamma_vasp_cmd:
@@ -180,7 +182,8 @@ class RunVaspCustodian(FiretaskBase):
             validators = [VasprunXMLValidator(), VaspFilesValidator()]
 
         c = Custodian(handlers, jobs, validators=validators, max_errors=max_errors,
-                      scratch_dir=scratch_dir, gzipped_output=gzip_output)
+                      scratch_dir=scratch_dir, gzipped_output=gzip_output,
+                      max_errors_per_job=max_errors_per_job)
 
         c.run()
 
