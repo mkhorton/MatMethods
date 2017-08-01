@@ -248,11 +248,6 @@ class VaspDrone(AbstractDrone):
                 for k in ['epsilon_static', 'epsilon_static_wolfe', 'epsilon_ionic']:
                     d["output"][k] = d_calc_final["output"][k]
 
-            # store paths to any available volumetric data
-            # only look for standard runs
-            if d["calcs_reversed"][0]["task"]["type"] == "standard":
-                d["volumetric_data"]["paths"] = self.process_volumetric(dir_name)
-
             d["state"] = "successful" if d_calc["has_vasp_completed"] else "unsuccessful"
 
             self.set_analysis(d)
@@ -324,6 +319,8 @@ class VaspDrone(AbstractDrone):
         d["output"]["is_metal"] = bs.is_metal()
         d["task"] = {"type": taskname, "name": taskname}
 
+        d["volumetric_data"] = self.process_volumetric(dir_name, taskname=taskname)
+
         if hasattr(vrun, "force_constants"):
             # phonon-dfpt
             d["output"]["force_constants"] = vrun.force_constants.tolist()
@@ -331,24 +328,28 @@ class VaspDrone(AbstractDrone):
             d["output"]["normalmode_eigenvecs"] = vrun.normalmode_eigenvecs.tolist()
         return d
 
-    @staticmethod
-    def process_volumetric(dir_name):
+    def process_volumetric(self, dir_name, taskname="standard", store_full_data=False):
         """
         It is useful, in the task doc, to specify what volumetric data
         we have stored and where we can find it if so. This is only
         intended for static calculations.
 
         :param dir_name: directory to search
+        :param taskname: taskname, e.g. "relax1"
+        :param store_full_data (bool): store volumetric data as a string or, if False,
+        just a filename
         :return: dict of files present with their corresponding path
         """
         d = {}
         possible_files = ('CHGCAR', 'LOCPOT', 'AECCAR0', 'AECCAR1', 'AECCAR2', 'ELFCAR')
-        for file in possible_files:
-            paths = glob.glob(os.path.join(dir_name, file + "*"))
-            if len(paths) > 1:
-                logger.warning('Multiple files found when trying to parse volumetric data.')
-            elif len(paths) == 1:
-                d[file.lower()] = paths[0]
+        for f in possible_files:
+            files = self.filter_files(dir_name, file_pattern=f)
+            if taskname in files:
+                if store_full_data:
+                    with open(files[taskname], 'r') as data:
+                        d[f.lower()] = data.read()
+                else:
+                    d[f.lower()] = files[taskname]
         return d
 
     @staticmethod
