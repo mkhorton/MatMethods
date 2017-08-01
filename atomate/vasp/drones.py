@@ -251,7 +251,7 @@ class VaspDrone(AbstractDrone):
             # store paths to any available volumetric data
             # only look for standard runs
             if d["calcs_reversed"][0]["task"]["type"] == "standard":
-                d["volumetric_data"] = self.process_volumetric(dir_name)
+                d["volumetric_data"]["paths"] = self.process_volumetric(dir_name)
 
             d["state"] = "successful" if d_calc["has_vasp_completed"] else "unsuccessful"
 
