@@ -248,6 +248,9 @@ class VaspDrone(AbstractDrone):
                 for k in ['epsilon_static', 'epsilon_static_wolfe', 'epsilon_ionic']:
                     d["output"][k] = d_calc_final["output"][k]
 
+            # store paths to any available volumetric data
+            d["volumetric_data"] = self.process_volumetric(dir_name)
+
             d["state"] = "successful" if d_calc["has_vasp_completed"] else "unsuccessful"
 
             self.set_analysis(d)
@@ -324,6 +327,26 @@ class VaspDrone(AbstractDrone):
             d["output"]["force_constants"] = vrun.force_constants.tolist()
             d["output"]["normalmode_eigenvals"] = vrun.normalmode_eigenvals.tolist()
             d["output"]["normalmode_eigenvecs"] = vrun.normalmode_eigenvecs.tolist()
+        return d
+
+    @staticmethod
+    def process_volumetric(self, dir_name):
+        """
+        It is useful, in the task doc, to specify what volumetric data
+        we have stored and where we can find it if so. This is only
+        intended for static calculations.
+
+        :param dir_name: directory to search
+        :return: dict of files present with their corresponding path
+        """
+        d = {}
+        possible_files = ('CHGCAR', 'LOCPOT', 'AECCAR0', 'AECCAR1', 'AECCAR2', 'ELFCAR')
+        for file in possible_files:
+            paths = glob.glob(os.path.join(dir_name, file + "*"))
+            if paths > 0:
+                logger.log('Multiple files found when trying to parse volumetric data.')
+            elif paths:
+                d[file.lower()] = paths[0]
         return d
 
     @staticmethod
