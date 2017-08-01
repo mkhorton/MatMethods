@@ -249,7 +249,9 @@ class VaspDrone(AbstractDrone):
                     d["output"][k] = d_calc_final["output"][k]
 
             # store paths to any available volumetric data
-            d["volumetric_data"] = self.process_volumetric(dir_name)
+            # only look for standard runs
+            if d["calcs_reversed"][0]["task"]["type"] == "standard":
+                d["volumetric_data"] = self.process_volumetric(dir_name)
 
             d["state"] = "successful" if d_calc["has_vasp_completed"] else "unsuccessful"
 
@@ -330,7 +332,7 @@ class VaspDrone(AbstractDrone):
         return d
 
     @staticmethod
-    def process_volumetric(self, dir_name):
+    def process_volumetric(dir_name):
         """
         It is useful, in the task doc, to specify what volumetric data
         we have stored and where we can find it if so. This is only
@@ -343,9 +345,9 @@ class VaspDrone(AbstractDrone):
         possible_files = ('CHGCAR', 'LOCPOT', 'AECCAR0', 'AECCAR1', 'AECCAR2', 'ELFCAR')
         for file in possible_files:
             paths = glob.glob(os.path.join(dir_name, file + "*"))
-            if paths > 0:
-                logger.log('Multiple files found when trying to parse volumetric data.')
-            elif paths:
+            if len(paths) > 1:
+                logger.warning('Multiple files found when trying to parse volumetric data.')
+            elif len(paths) == 1:
                 d[file.lower()] = paths[0]
         return d
 

@@ -107,7 +107,7 @@ class VaspCalcDb(CalcDb):
                 del task_doc["calcs_reversed"][0]["bandstructure"]
 
         # insert volumetric data into GridFS
-        if parse_volumetric and "volumetric_data" in task_doc:
+        if parse_volumetric and ("volumetric_data" in task_doc):
 
             # get list of what volumetric data is available for this task_doc
             volumetric_data_available = set(task_doc["volumetric_data"].keys())

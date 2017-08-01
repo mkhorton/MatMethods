@@ -25,6 +25,7 @@ class VaspToDbTaskDroneTest(unittest.TestCase):
         cls.relax2 = os.path.join(module_dir, "..", "test_files", "Si_structure_optimization_relax2",
                                  "outputs")
         cls.Al = os.path.join(module_dir, "..", "test_files", "Al")
+        cls.Si_static = os.path.join(module_dir, "..", "test_files", "Si_static", "outputs")
 
     def test_assimilate(self):
         drone = VaspDrone()
@@ -77,6 +78,16 @@ class VaspToDbTaskDroneTest(unittest.TestCase):
             self.assertEqual(d["bandgap"], 0.0)
             self.assertFalse(d["is_gap_direct"])
             self.assertTrue(d["is_metal"])
+
+    def test_volumetric(self):
+        drone = VaspDrone()
+        doc = drone.assimilate(self.Si_static)
+        v = doc["volumetric_data"]
+        self.assertTrue('CHGCAR.gz' in v['chgcar'])
+        self.assertTrue('LOCPOT.gz' in v['locpot'])
+        self.assertTrue('AECCAR0.gz' in v['aeccar0'])
+        self.assertTrue('AECCAR1.gz' in v['aeccar1'])
+        self.assertTrue('AECCAR2.gz' in v['aeccar2'])
 
 if __name__ == "__main__":
     unittest.main()
