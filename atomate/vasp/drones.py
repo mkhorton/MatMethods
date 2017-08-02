@@ -328,7 +328,7 @@ class VaspDrone(AbstractDrone):
             d["output"]["normalmode_eigenvecs"] = vrun.normalmode_eigenvecs.tolist()
         return d
 
-    def process_volumetric(self, dir_name, taskname="standard", store_full_data=False):
+    def process_volumetric(self, dir_name, taskname="standard"):
         """
         It is useful, in the task doc, to specify what volumetric data
         we have stored and where we can find it if so. This is only
@@ -336,8 +336,6 @@ class VaspDrone(AbstractDrone):
 
         :param dir_name: directory to search
         :param taskname: taskname, e.g. "relax1"
-        :param store_full_data (bool): store volumetric data as a string or, if False,
-        just a filename
         :return: dict of files present with their corresponding path
         """
         d = {}
@@ -345,11 +343,7 @@ class VaspDrone(AbstractDrone):
         for f in possible_files:
             files = self.filter_files(dir_name, file_pattern=f)
             if taskname in files:
-                if store_full_data:
-                    with open(files[taskname], 'r') as data:
-                        d[f.lower()] = data.read()
-                else:
-                    d[f.lower()] = files[taskname]
+                d[f.lower()] = files[taskname]
         return d
 
     @staticmethod
