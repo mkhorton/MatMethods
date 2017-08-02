@@ -330,13 +330,12 @@ class VaspDrone(AbstractDrone):
 
     def process_volumetric(self, dir_name, taskname="standard"):
         """
-        It is useful, in the task doc, to specify what volumetric data
-        we have stored and where we can find it if so. This is only
-        intended for static calculations.
+        It is useful to store what volumetric data has been
+        calculated.
 
         :param dir_name: directory to search
         :param taskname: taskname, e.g. "relax1"
-        :return: dict of files present with their corresponding path
+        :return: dict of files present
         """
         d = {}
         possible_files = ('CHGCAR', 'LOCPOT', 'AECCAR0', 'AECCAR1', 'AECCAR2', 'ELFCAR')
