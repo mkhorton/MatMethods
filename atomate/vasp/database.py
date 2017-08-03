@@ -11,12 +11,9 @@ This module defines the database classes.
 import zlib
 import json
 from bson import ObjectId
-from monty.io import ScratchDir
-import os
 
 from pymatgen.electronic_structure.bandstructure import BandStructure, BandStructureSymmLine
 from pymatgen.electronic_structure.dos import CompleteDos
-from pymatgen.io.vasp.outputs import Chgcar
 
 import gridfs
 from pymongo import ASCENDING, DESCENDING
@@ -68,7 +65,7 @@ class VaspCalcDb(CalcDb):
                                           ("completed_at", DESCENDING)],
                                          background=background)
 
-    def insert_task(self, task_doc, parse_dos=False, parse_bs=False, parse_volumetric=()):
+    def insert_task(self, task_doc, parse_dos=False, parse_bs=False):
         """
         Inserts a task document (e.g., as returned by Drone.assimilate()) into the database.
         Handles putting DOS and band structure into GridFS as needed.
@@ -77,12 +74,6 @@ class VaspCalcDb(CalcDb):
             task_doc: (dict) the task document
             parse_dos: (bool) attempt to parse dos in task_doc and insert into Gridfs
             parse_bs: (bool) attempt to parse bandstructure in task_doc and insert into Gridfs
-            parse_volumetric: (tuple of strings) attempt to parse volumetric data referenced in
-            task_doc and insert into GridFS, if list specify specific volumetric data to store
-            from possibilities ('chgcar', 'locpot', 'aeccar0', 'aeccar1', 'aeccar2', 'elfcar',
-            'reference'), where 'reference' is special reserved keyword which will attempt
-            to sum 'aeccar0' and 'aeccar2' instead of storing these individually,
-            suggested default is ('chgcar', 'reference', 'elfcar')
 
         Returns:
             (int) - task_id of inserted document
@@ -105,59 +96,6 @@ class VaspCalcDb(CalcDb):
                 task_doc["calcs_reversed"][0]["bandstructure_compression"] = compression_type
                 task_doc["calcs_reversed"][0]["bandstructure_fs_id"] = gfs_id
                 del task_doc["calcs_reversed"][0]["bandstructure"]
-
-        # insert volumetric data into GridFS
-        if parse_volumetric and ("volumetric_data" in task_doc["calcs_reversed"][0]):   # only store idx=0 data
-
-            vol_data = task_doc["calcs_reversed"][0]["volumetric_data"]
-
-            # get list of what volumetric data is available for this task_doc
-            volumetric_data_available = set(vol_data.keys())
-            dir_name = task_doc["calcs_reversed"][0]["dir_name"]
-
-            # only store specified subset of volumetric data
-            volumetric_data_available = volumetric_data_available.intersection(set(parse_volumetric))
-
-            # 'reference' is a special reserved word, do not store aeccar0 and aeccar2
-            # individually if we're storing reference volume
-            if 'reference' in volumetric_data_available:
-                volumetric_data_available = volumetric_data_available - {"aeccar0", "aeccar2"}
-
-            for vol_name in volumetric_data_available:
-
-                # VolumetricData isn't MSONable, so we have to write it out
-                # to save to gridfs
-                with ScratchDir(".") as temp_dir:
-
-                    # special 'reference' has to be constructed
-                    # from aeccar0 and aeccar2
-                    if vol_name == 'reference':
-                        aeccar0_name = vol_data.get("aeccar0", None)
-                        aeccar2_name = vol_data.get("aeccar2", None)
-                        if aeccar0_name and aeccar2_name:
-                            aeccar0 = Chgcar.from_file(os.join(dir_name, aeccar0_name))
-                            aeccar2 = Chgcar.from_file(os.join(dir_name, aeccar2_name))
-                            reference = aeccar0.linear_add(aeccar2)
-                            reference.write_file(os.path.join(temp_dir, "reference.gz"))
-                        else:
-                            logger.log("Attempted to calculate reference charge density for {} "
-                                       "but AECCAR* files not found.".format(task_doc["task_id"]))
-                            vol_path = None
-                    else:
-                        vol_path = os.join(dir_name, vol_data[vol_name])
-
-                    if vol_path:
-
-                        # not using insert_gridfs because inserting from file
-                        with open(vol_path) as f:
-                            oid = ObjectId()
-                            fs = gridfs.GridFS(self.db, "volumetric_fs")
-                            gfs_id = fs.put(f, _id=oid)
-
-                            if "volumetric_data_gfs" not in task_doc:
-                                task_doc["volumetric_data_gfs"] = {}
-
-                            task_doc["volumetric_data_gfs"][vol_name] = gfs_id
 
         # insert the task document and return task_id
         return self.insert(task_doc)
