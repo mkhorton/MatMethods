@@ -94,9 +94,10 @@ def get_wf_magnetic_orderings(structure,
                               vasp_cmd=VASP_CMD,
                               db_file=DB_FILE,
                               default_magmoms=None,
-                              respect_input_magmoms=False, # TODO,
+                              respect_input_magmoms="replace_all",
                               calculate_magmoms='VASP', # TODO can be bader -- move to Db instead
                               attempt_ferrimagnetic=None,
+                              attempt_afm_by_motif=False,
                               num_orderings=10,
                               max_cell_size=None,
                               vasp_input_set_kwargs=None,
@@ -110,8 +111,8 @@ def get_wf_magnetic_orderings(structure,
     collection, magnetic_orderings, in the supplied
     db_file.
 
-    If the input structure has magnetic moments defined, these
-    will be used to give a hint as to which elements are
+    If the input structure has magnetic moments defined, it
+    is possible to use these as a hint as to which elements are
     magnetic, otherwise magnetic elements will be guessed
     (this can be changed using default_magmoms kwarg).
 
@@ -167,70 +168,90 @@ def get_wf_magnetic_orderings(structure,
     :return:
     """
 
-    if not structure.is_ordered:
-        raise ValueError("Please obtain an ordered approximation of the input structure.")
-
     formula = structure.composition.reduced_formula
 
+    # to process disordered magnetic structures, first make an
+    # ordered approximation
+    if not structure.is_ordered:
+        raise ValueError("Please obtain an ordered approximation of the "
+                         "input structure ({}).".format(formula))
 
-    ### extract which sites are magnetic, remove inital magmom information
-    ### i.e. get fm
-    ### add respect_input tag (for benchmark let's not)
+    # CollinearMagneticStructureAnalyzer is used throughout:
+    # it can tell us whether the input is itself collinear (if not,
+    # this workflow is not appropriate), and has many convenience
+    # methods e.g. magnetic structure matching, etc.
+    input_analyzer = CollinearMagneticStructureAnalyzer(structure,
+                                                        default_magmoms=default_magmoms,
+                                                        overwrite_magmom_mode="none")
 
-    # just used to check ordering of input, i.e. if input is magnetic
-    input_msa = CollinearMagneticStructureAnalyzer(structure,
-                                                  default_magmoms=default_magmoms,
-                                                  overwrite_magmom_mode="none")
-
-    if not input_msa.is_collinear:
+    # this workflow enumerates structures with different combinations
+    # of up and down spin and does not include spin-orbit coupling:
+    # if your input structure has vector magnetic moments, this
+    # workflow is not appropriate
+    if not input_analyzer.is_collinear:
         raise ValueError("Input structure ({}) is non-collinear.".format(formula))
 
-    # make primitive
+    # sanitize input structure: first make primitive ...
     structure = structure.get_primitive_structure(use_site_props=False)
-    # strip out existing magmoms, can cause conflicts with transformation otherwise
+    # ... and strip out existing magmoms, which can cause conflicts
+    # with later transformations otherwise since sites would end up
+    # with both magmom site properties and Specie spins defined
     if 'magmom' in structure.site_properties:
         structure.remove_site_property('magmom')
 
-    # used for rest of workflow
-    msa = CollinearMagneticStructureAnalyzer(structure,
-                                             default_magmoms=default_magmoms,
-                                             overwrite_magmom_mode="replace_all")
+    # analyzer is used to obtain information on sanitized input
+    analyzer = CollinearMagneticStructureAnalyzer(structure,
+                                                  default_magmoms=default_magmoms,
+                                                  overwrite_magmom_mode="replace_all")
 
-    ### GENERATE MAGNETICALLY ORDERED STRUCTURES ###
+    # now we can begin to generate our magnetic orderings
+    logger.info("Generating magnetic orderings for {}".format(formula))
 
-    logger.info("Generating magnetic orderings for {}".format(structure.composition))
-
-    mag_species_spin = msa.magnetic_species_and_magmoms
-    types_mag_species = msa.types_of_magnetic_specie
+    mag_species_spin = analyzer.magnetic_species_and_magmoms
+    types_mag_species = analyzer.types_of_magnetic_specie
     types_mag_elements = {sp.symbol for sp in types_mag_species}
-    num_mag_sites = msa.number_of_magnetic_sites
-    num_unique_sites = msa.number_of_unique_magnetic_sites()
+    num_mag_sites = analyzer.number_of_magnetic_sites
+    num_unique_sites = analyzer.number_of_unique_magnetic_sites()
 
+    # enumerations become too slow as number of unique sites (and thus
+    # permutations) increase, 8 is a soft limit, this can be increased
+    # but do so with care
     if num_unique_sites > 8:
         raise ValueError("Too many magnetic sites to sensibly perform enumeration.")
 
+    # maximum cell size to consider: as a rule of thumb, if the primitive cell
+    # contains a large number of magnetic sites, perhaps we only need to enumerate
+    # within one cell, whereas on the other extreme if the primitive cell only
+    # contains a single magnetic site, we have to create larger supercells
     max_cell_size = max_cell_size if max_cell_size else max(1, int(4/num_mag_sites))
     logger.info("Max cell size set to {}".format(max_cell_size))
 
-    # detect co-ordination numbers (for enumerating ferrimagnetic structures)
+    # when enumerating ferrimagnetic structures, it's useful to detect
+    # co-ordination numbers on the magnetic sites, since different
+    # local environments can result in different magnetic order
+    # (e.g. inverse spinels)
     nn = MinimumDistanceNN()
     cns = [nn.get_cn(structure, n) for n in range(len(structure))]
     is_magnetic_sites = [True if site.specie in types_mag_species
                          else False for site in structure]
-    # not interested in co-ordination numbers for sites
-    # that we don't think are magnetic
+    # we're not interested in co-ordination numbers for sites
+    # that we don't think are magnetic, set these to zero
     cns = [cn if is_magnetic_site else 0
            for cn, is_magnetic_site in zip(cns, is_magnetic_sites)]
     structure.add_site_property('cn', cns)
     unique_cns = set(cns) - {0}
 
-    # guess whether to attempt enumerating ferrimagnetic structures or not
+    ### Start generating ordered structures ###
+
+    # if user doesn't specifically request ferrimagnetic orderings,
+    # we apply a heuristic as to whether to attempt them or not
     if attempt_ferrimagnetic is None:
         if len(unique_cns) > 1 or len(types_mag_species) > 1:
             attempt_ferrimagnetic = True
         else:
             attempt_ferrimagnetic = False
 
+    # utility function to combine outputs from several transformations
     def _add_structures(ordered_structures, structures_to_add, log_msg=""):
         """
         Transformations with return_ranked_list can return either
@@ -250,22 +271,20 @@ def get_wf_magnetic_orderings(structure,
                                                                 log_msg))
         return ordered_structures
 
-    # we can't enumerate all possible orderings, this combination
-    # of if statements applies heuristics which work for a large
-    # number of materials
-
-    # TODO: check this is 'real' ferromagnetic
-
     # we start with a ferromagnetic ordering
-    fm_structure = msa.get_ferromagnetic_structure()
-    # store magmom as spin property, to be consistent with pymatgen's transformations
+    fm_structure = analyzer.get_ferromagnetic_structure()
+    # store magmom as spin property, to be consistent with output from
+    # other transformations
     fm_structure.add_spin_by_site(fm_structure.site_properties['magmom'])
     fm_structure.remove_site_property('magmom')
+
+    # we now have our first magnetic ordering...
     ordered_structures = [fm_structure]
 
-    # we enumerate simple AFM cases first
+    # ...to which we can add simple AFM cases first...
     constraint = MagOrderParameterConstraint(
         0.5,
+        # TODO: this list(map(str...)) can probably be removed
         species_constraints=list(map(str, types_mag_species))
     )
 
@@ -279,15 +298,12 @@ def get_wf_magnetic_orderings(structure,
                                          structures_to_add,
                                          log_msg=" from antiferromagnetic enumeration")
 
-    # we also try ferrimagnetic orderings by motif for single magnetic species
+    # ...and then we also try ferrimagnetic orderings by motif if a
+    # single magnetic species is present...
     if attempt_ferrimagnetic and num_unique_sites > 1 and len(types_mag_elements) == 1:
-        # here we try AFM, but we also try ferrimagnetic
-        # orderings
 
-
-
+        # these orderings are AFM on one local environment, and FM on the rest
         for cn in unique_cns:
-
             constraints = [
                 MagOrderParameterConstraint(
                     0.5,
@@ -311,7 +327,8 @@ def get_wf_magnetic_orderings(structure,
 
             ordered_structures = _add_structures(ordered_structures,
                                                  structures_to_add,
-                                                 log_msg=" from ferrimagnetic motif enumeration")
+                                                 log_msg=" from ferrimagnetic motif "
+                                                         "enumeration")
 
     # and also try ferrimagnetic when there are multiple magnetic species
     elif attempt_ferrimagnetic and len(types_mag_species) > 1:
@@ -341,6 +358,32 @@ def get_wf_magnetic_orderings(structure,
                                                  structures_to_add,
                                                  log_msg=" from ferrimagnetic species enumeration")
 
+    # ...and finally, we try orderings that are AFM on one local
+    # environment, and non-magnetic on the rest -- this is less common
+    # but unless explicitly attempted, these states are unlikely to be found
+    if attempt_afm_by_motif:
+        for cn in unique_cns:
+            constraints = [
+                MagOrderParameterConstraint(
+                    0.5,
+                    site_constraint_name='cn',
+                    site_constraints=cn
+                )
+            ]
+
+            trans = MagOrderingTransformation(mag_species_spin,
+                                              order_parameter=constraints,
+                                              max_cell_size=max_cell_size,
+                                              timeout=timeout)
+
+            structures_to_add = trans.apply_transformation(structure,
+                                                           return_ranked_list=num_orderings)
+
+            ordered_structures = _add_structures(ordered_structures,
+                                                 structures_to_add,
+                                                 log_msg=" from antiferromagnetic motif "
+                                                         "enumeration")
+
     # in case we've introduced duplicates, let's remove them
     structures_to_remove = []
     for idx, ordered_structure in enumerate(ordered_structures):
@@ -355,17 +398,20 @@ def get_wf_magnetic_orderings(structure,
         ordered_structures = [s for idx, s in enumerate(ordered_structures)
                               if idx not in structures_to_remove]
 
+    ### Finished generating ordered structures ###
+
+    # Perform book-keeping:
     # indexes keeps track of which ordering we tried first
     # it helps give us statistics for how many orderings we
     # have to try before we get the true expt. ground state (if known)
     indexes = list(range(len(ordered_structures)))
 
-    if input_msa.ordering != Ordering.NM:
+    if input_analyzer.ordering != Ordering.NM:
         # if our input structure isn't in our generated structures,
         # let's add it manually
-        matches = [input_msa.matches_ordering(s) for s in ordered_structures]
+        matches = [input_analyzer.matches_ordering(s) for s in ordered_structures]
         if not any(matches):
-            ordered_structures.append(input_msa.structure)
+            ordered_structures.append(input_analyzer.structure)
             indexes += [-1]
             logger.info("Input structure not present in enumerated structures, adding...")
             debug_match_index = -1
@@ -376,23 +422,23 @@ def get_wf_magnetic_orderings(structure,
                         "structures at index {}".format(matches.index(True)))
             debug_match_index = matches.index(True)
 
-    ### ADD WORKFLOWS FOR GENERATED STRUCTURES ###
+    ### Generate FWs for each ordered structure ###
 
     fws = []
     analysis_parents = []
 
     for idx, ordered_structure in enumerate(ordered_structures):
 
-        msa = CollinearMagneticStructureAnalyzer(ordered_structure)
+        analyzer = CollinearMagneticStructureAnalyzer(ordered_structure)
 
-        name = "ordering {} {} -".format(indexes[idx], msa.ordering.value)
+        name = "ordering {} {} -".format(indexes[idx], analyzer.ordering.value)
 
         # get keyword arguments for VaspInputSet
         relax_vis_kwargs = {'user_incar_settings': {'ISYM': 0, 'LASPH': True}}
         if vasp_input_set_kwargs:
             relax_vis_kwargs.update(vasp_input_set_kwargs)
 
-        if msa.ordering == Ordering.NM:
+        if analyzer.ordering == Ordering.NM:
             # use with care, in general we *do not* want a non-spin-polarized calculation
             # just because initial structure has zero magnetic moments; used here for
             # calculation of magnetic deformation proxy
