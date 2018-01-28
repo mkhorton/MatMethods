@@ -739,7 +739,9 @@ class MagneticOrderingsToDB(FiretaskBase):
     # -mkhorton
 
     # TODO: remove strategy?
-    required_params = ["db_file", "wf_uuid", "parent_structure", "strategy"]
+    required_params = ["db_file", "wf_uuid", "parent_structure",
+                       "strategy", "perform_bader"]
+    optional_params = ["origins", "input_index"]
 
     def run_task(self, fw_spec):
 
@@ -810,6 +812,10 @@ class MagneticOrderingsToDB(FiretaskBase):
             task_label = d["task_label"].split(' ')
             ordering_index = task_label.index('ordering')
             ordering_index = int(task_label[ordering_index + 1])
+            if self["origins"]:
+                ordering_origin = self["origins"][ordering_index]
+            else:
+                ordering_origin = None
 
             # note if a magnetic structure relaxes to a non-magnetic structure
             # TODO: filter out 0.6 magmoms?
@@ -849,6 +855,8 @@ class MagneticOrderingsToDB(FiretaskBase):
                     "ordering": input_analyzer.ordering.value,
                     "symmetry": input_structure.get_space_group_info()[0],
                     "index": ordering_index,
+                    "origin": ordering_origin,
+                    "input_index": self.get("input_index", None),
                     "strategy": self["strategy"]
                 },
                 "ordering": final_analyzer.ordering.value,
@@ -943,7 +951,7 @@ class MagneticDeformationToDB(FiretaskBase):
         success = False if msa.ordering == Ordering.NM else True
 
         # get mpid
-        mpr = MPRester()
+        mpr = MPRester() #TODO: remove?
         try:
             mpids = mpr.find_structure(m_structure)
         except:

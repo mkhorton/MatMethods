@@ -571,6 +571,8 @@ class MagneticOrderingsWF:
                                                      name="MagneticOrderingsToDB",
                                                      parent_structure=self.sanitized_structure,
                                                      strategy=vasp_input_set_kwargs,
+                                                     origins=ordered_structure_origins,
+                                                     input_index=self.input_index,
                                                      perform_bader=perform_bader),
                                name="Magnetic Orderings Analysis", parents=analysis_parents)
         fws.append(fw_analysis)
