@@ -833,7 +833,7 @@ class MagneticOrderingsToDB(FiretaskBase):
                         # ToDB task has access to appropriate dir
                         if ":" in dir_name:
                             dir_name = dir_name.split(":")[1]
-                        magmoms["bader"] = bader_analysis_from_path(dir_name)
+                        magmoms["bader"] = bader_analysis_from_path(dir_name)["magmom"]
                     except Exception as e:
                         magmoms["bader"] = "Bader analysis failed: {}".format(e)
 
