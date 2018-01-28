@@ -736,7 +736,7 @@ class MagneticOrderingsToDB(FiretaskBase):
     # -mkhorton
 
     # TODO: remove strategy?
-    required_params = ["db_file", "wf_uuid", "parent_structure", "strategy", "perform_bader"]
+    required_params = ["db_file", "wf_uuid", "parent_structure", "strategy"]
 
     def run_task(self, fw_spec):
 
@@ -782,10 +782,13 @@ class MagneticOrderingsToDB(FiretaskBase):
 
             final_structure = Structure.from_dict(d["output"]["structure"])
 
-            input_msa = CollinearMagneticStructureAnalyzer(input_structure)
-            final_msa = CollinearMagneticStructureAnalyzer(final_structure)
+            # picking a fairly large threshold so that default 0.6 µB magmoms don't
+            # cause problems with analysis, this is obviously not approriate for
+            # some magnetic structures with small magnetic moments (e.g. CuO)
+            input_analyzer = CollinearMagneticStructureAnalyzer(input_structure, threshold=0.7)
+            final_analyzer = CollinearMagneticStructureAnalyzer(final_structure, threshold=0.7)
 
-            ordering_changed = final_msa.ordering == input_msa.ordering
+            ordering_changed = final_analyzer.ordering == input_analyzer.ordering
             symmetry_changed = final_structure.get_space_group_info()[0] == input_structure.get_space_group_info()[0]
 
             if d["task_id"] == ground_state_task_id:
@@ -807,8 +810,8 @@ class MagneticOrderingsToDB(FiretaskBase):
 
             # note if a magnetic structure relaxes to a non-magnetic structure
             # TODO: filter out 0.6 magmoms?
-            if input_msa.ordering != Ordering.NM \
-                    and final_msa.ordering == Ordering.NM:
+            if input_analyzer.ordering != Ordering.NM \
+                    and final_analyzer.ordering == Ordering.NM:
                 successful = False
             else:
                 successful = True
@@ -825,12 +828,12 @@ class MagneticOrderingsToDB(FiretaskBase):
                 "structure": final_structure.as_dict(),
                 "input": {
                     "structure": input_structure.as_dict(),
-                    "ordering": input_msa.ordering.value,
+                    "ordering": input_analyzer.ordering.value,
                     "symmetry": input_structure.get_space_group_info()[0],
                     "index": ordering_index,
                     "strategy": self["strategy"]
                 },
-                "ordering": final_msa.ordering.value,
+                "ordering": final_analyzer.ordering.value,
                 "ordering_changed": ordering_changed,
                 "symmetry": final_structure.get_space_group_info()[0],
                 "symmetry_changed": symmetry_changed,
