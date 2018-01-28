@@ -25,6 +25,7 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.analysis.ferroelectricity.polarization import Polarization, get_total_ionic_dipole, \
     EnergyTrend
 from pymatgen.analysis.magnetism import CollinearMagneticStructureAnalyzer, Ordering
+from pymatgen.command_line.bader_caller import bader_analysis_from_path
 
 from atomate.common.firetasks.glue_tasks import get_calc_loc
 from atomate.utils.utils import env_chk, get_meta_from_structure
@@ -64,7 +65,8 @@ class VaspToDb(FiretaskBase):
             Defaults to True.
     """
     optional_params = ["calc_dir", "calc_loc", "parse_dos", "bandstructure_mode",
-                       "additional_fields", "db_file", "fw_spec_field", "defuse_unsuccessful"]
+                       "additional_fields", "db_file", "fw_spec_field", "defuse_unsuccessful",
+                       "perform_bader"]
 
     def run_task(self, fw_spec):
         # get the directory that contains the VASP dir to parse
@@ -79,7 +81,8 @@ class VaspToDb(FiretaskBase):
 
         drone = VaspDrone(additional_fields=self.get("additional_fields"),
                           parse_dos=self.get("parse_dos", False), compress_dos=1,
-                          bandstructure_mode=self.get("bandstructure_mode", False), compress_bs=1)
+                          bandstructure_mode=self.get("bandstructure_mode", False), compress_bs=1,
+                          perform_bader=self.get("perform_bader", False))
 
         # assimilate (i.e., parse)
         task_doc = drone.assimilate(calc_dir)
@@ -818,7 +821,21 @@ class MagneticOrderingsToDB(FiretaskBase):
 
             magmoms = {"vasp": final_structure.site_properties["magmom"]}
             if self["perform_bader"]:
-                magmoms["bader"] = d["bader"]["magmom"]
+                # if bader has already been run during task ingestion,
+                # use existing analysis
+                if "bader" in d:
+                    magmoms["bader"] = d["bader"]["magmom"]
+                # else try to run it
+                else:
+                    try:
+                        dir_name = d["dir_name"]
+                        # strip hostname if present, implicitly assumes
+                        # ToDB task has access to appropriate dir
+                        if ":" in dir_name:
+                            dir_name = dir_name.split(":")[1]
+                        magmoms["bader"] = bader_analysis_from_path(dir_name)
+                    except Exception as e:
+                        magmoms["bader"] = "Bader analysis failed: {}".format(e)
 
             summary = {
                 "formula": formula,
