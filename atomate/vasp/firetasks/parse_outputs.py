@@ -804,6 +804,8 @@ class MagneticOrderingsToDB(FiretaskBase):
                 decomposes_to = ground_state_task_id
             energy_above_ground_state_per_atom = d["output"]["energy_per_atom"] \
                                                  - ground_state_energy
+            energy_diff_relax_static = optimize_task["output"]["energy_per_atom"] \
+                                       - d["output"]["energy_per_atom"]
 
             # tells us the order in which structure was guessed
             # 1 is FM, then AFM..., -1 means it was entered manually
@@ -867,6 +869,7 @@ class MagneticOrderingsToDB(FiretaskBase):
                 "stable": stable,
                 "decomposes_to": decomposes_to,
                 "energy_above_ground_state_per_atom": energy_above_ground_state_per_atom,
+                "energy_diff_relax_static": energy_diff_relax_static,
                 "successful": successful,
                 "created_at": datetime.utcnow()
             }
