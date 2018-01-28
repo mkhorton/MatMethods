@@ -752,6 +752,7 @@ class MagneticOrderingsToDB(FiretaskBase):
         mmdb = VaspCalcDb.from_db_file(db_file, admin=True)
 
         formula = self["parent_structure"].formula
+        formula_pretty = self["parent_structure"].composition.reduced_formula
 
         # get ground state energy
         docs = list(mmdb.collection.find({"wf_meta.wf_uuid": uuid,
@@ -847,6 +848,7 @@ class MagneticOrderingsToDB(FiretaskBase):
 
             summary = {
                 "formula": formula,
+                "formula_pretty": formula_pretty,
                 "parent_structure": self["parent_structure"].as_dict(),
                 "wf_meta": d["wf_meta"],  # book-keeping
                 "task_id": d["task_id"],
