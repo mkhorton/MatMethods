@@ -29,7 +29,7 @@ __status__ = "Development"
 __date__ = "March 2017"
 
 __magnetic_deformation_wf_version__ = 1.2
-__magnetic_ordering_wf_version__ = 1.3
+__magnetic_ordering_wf_version__ = "2.0b"
 
 module_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 
