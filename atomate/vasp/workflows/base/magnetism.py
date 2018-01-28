@@ -194,6 +194,15 @@ class MagneticOrderingsWF:
         self.max_cell_size = max_cell_size
         self.timeout = timeout
 
+        # our magnetically ordered structures will be
+        # stored here once generated and also store which
+        # transformation created them, this is used for
+        # book-keeping/user interest, and
+        # is be a list of strings in ("fm", "afm",
+        # "ferrimagnetic_by_species", "ferrimagnetic_by_motif",
+        # "afm_by_motif", "input_structure")
+        self.ordered_structures, self.ordered_structures_origins = [], []
+
         formula = structure.composition.reduced_formula
 
         # to process disordered magnetic structures, first make an
@@ -224,13 +233,6 @@ class MagneticOrderingsWF:
         # and then apply them to our input structure
         self.transformations = self._generate_transformations(self.sanitized_structure)
 
-        # our magnetically ordered structures will be
-        # stored here once generated and also store which
-        # transformation created them, this is used for
-        # book-keeping/user interest, and
-        # is be a list of strings in ("fm", "afm",
-        # "ferrimagnetic_by_species", "ferrimagnetic_by_motif",
-        # "afm_by_motif", "input_structure")
         self.ordered_structures, \
         self.ordered_structure_origins = self._generate_ordered_structures(self.sanitized_structure,
                                                                            self.transformations)
@@ -416,8 +418,10 @@ class MagneticOrderingsWF:
 
     def _generate_ordered_stuctures(self, sanitized_input_structure, transformations):
 
+        ordered_structures, ordered_structures_origins = [], []
+
         # utility function to combine outputs from several transformations
-        def _add_structures(ordered_structures, structures_to_add, log_msg=""):
+        def _add_structures(ordered_structures, structures_to_add, origin=""):
             """
             Transformations with return_ranked_list can return either
             just Structures or dicts (or sometimes lists!) -- until this
@@ -432,13 +436,18 @@ class MagneticOrderingsWF:
                                      else s for s in structures_to_add]
                 # concatenation
                 ordered_structures += structures_to_add
-                logger.info('Adding {} ordered structures{}'.format(len(structures_to_add),
-                                                                    log_msg))
+                logger.info('Adding {} ordered structures: {}'.format(len(structures_to_add),
+                                                                      origin))
 
 
             return ordered_structures
 
-
+        for origin, trans in self.transformations.items():
+            structures_to_add = trans.apply_transformation(self.sanitized_structure,
+                                                           return_ranked_list=self.num_orderings)
+            ordered_structures = _add_structures(ordered_structures,
+                                                 structures_to_add,
+                                                 origin=origin)
 
         # in case we've introduced duplicates, let's remove them
         structures_to_remove = []
@@ -456,21 +465,36 @@ class MagneticOrderingsWF:
                 'Removing {} duplicate ordered structures'.format(len(structures_to_remove)))
             ordered_structures = [s for idx, s in enumerate(ordered_structures)
                                   if idx not in structures_to_remove]
+            ordered_structures_origins = [o for idx, o in enumerate(ordered_structures_origins)
+                                          if idx not in structures_to_remove]
 
-        structures_to_add = trans.apply_transformation(structure,
-                                                       return_ranked_list=num_orderings)
-        ordered_structures = _add_structures(ordered_structures,
-                                             structures_to_add,
-                                             log_msg=" from antiferromagnetic enumeration")
+        # if our input structure isn't in our generated structures,
+        # let's add it manually and also keep a note of which structure
+        # is our input: this is mostly for book-keeping/benchmarking
+        self.index_origin = None
+        if self.input_analyzer.ordering != Ordering.NM:
+            matches = [self.input_analyzer.matches_ordering(s) for s in ordered_structures]
+            if not any(matches):
+                ordered_structures.append(self.input_analyzer.structure)
+                logger.info("Input structure not present in enumerated structures, adding...")
+            else:
+                logger.info("Input structure was found in enumerated "
+                            "structures at index {}".format(matches.index(True)))
+                self.index_origin = matches.index(True)
 
-        return (ordered_structures, ordered_structures_origins)
+        self.ordered_structures.append(ordered_structures)
+        self.ordered_structure_origins.append(ordered_structures_origins)
+
+        return
 
     def get_wf(self, vasp_cmd=VASP_CMD,
                      db_file=DB_FILE,
                      vasp_input_set_kwargs=None,
                      optimize_fw=None,
                      static_fw=None,
-                     perform_bader=True):
+                     perform_bader=True,
+                     num_orderings_soft_limit=8,
+                     num_orderings_hard_limit=16):
         """
 
         :param vasp_cmd: as elsewhere in atomate
@@ -491,11 +515,11 @@ class MagneticOrderingsWF:
         fws = []
         analysis_parents = []
 
-        for idx, ordered_structure in enumerate(ordered_structures):
+        for idx, ordered_structure in enumerate(self.ordered_structures):
 
             analyzer = CollinearMagneticStructureAnalyzer(ordered_structure)
 
-            name = "ordering {} {} -".format(indexes[idx], analyzer.ordering.value)
+            name = "ordering {} {} -".format(idx, analyzer.ordering.value)
 
             # get keyword arguments for VaspInputSet
             relax_vis_kwargs = {'user_incar_settings': {'ISYM': 0, 'LASPH': True}}
@@ -515,7 +539,7 @@ class MagneticOrderingsWF:
             fws.append(StaticFW(ordered_structure, vasp_cmd=vasp_cmd,
                                 db_file=db_file,
                                 name=name + " static",
-                                vasp_to_db_kwargs={"perform_bader": True},
+                                vasp_to_db_kwargs={"perform_bader": perform_bader},
                                 prev_calc_loc=True, parents=fws[-1]))
 
             analysis_parents.append(fws[-1])
@@ -525,12 +549,13 @@ class MagneticOrderingsWF:
                                                      wf_uuid=uuid,
                                                      auto_generated=False,
                                                      name="MagneticOrderingsToDB",
-                                                     parent_structure=structure,
+                                                     parent_structure=self.sanitized_structure,
                                                      strategy=vasp_input_set_kwargs,
                                                      perform_bader=perform_bader),
                                name="Magnetic Orderings Analysis", parents=analysis_parents)
         fws.append(fw_analysis)
 
+        formula = self.sanitized_structure.composition.reduced_formula
         wf_name = "{} - magnetic orderings".format(formula)
         wf = Workflow(fws, name=wf_name)
 
@@ -545,6 +570,7 @@ class MagneticOrderingsWF:
         wf = add_tags(wf, [tag])
 
         self._wf = wf
+
         return wf
 
 
