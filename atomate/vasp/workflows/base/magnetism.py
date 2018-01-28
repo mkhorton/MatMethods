@@ -523,14 +523,17 @@ class MagneticOrderingsWF:
         # this is somewhat course, better to reduce num_orderings kwarg and/or
         # change enumeration strategies
         ordered_structures = self.ordered_structures
+        ordered_structure_origins = self.ordered_structure_origins
         if num_orderings_limit and len(self.ordered_structures) > num_orderings_limit:
             ordered_structures = self.ordered_structures[0:num_orderings_limit]
+            ordered_structure_origins = self.ordered_structure_origins[0:num_orderings_limit]
             logger.warning("Number of ordered structures exceeds hard limit, "
                            "removing last {} structures.".format(len(self.ordered_structures)-
                                                                  len(ordered_structures)))
             # always make sure input structure is included
             if self.input_index and self.input_index > num_orderings_limit:
                 ordered_structures.append(self.ordered_structures[self.input_index])
+                ordered_structure_origins.append(self.ordered_structure_origins[self.input_index])
 
         for idx, ordered_structure in enumerate(ordered_structures):
 
@@ -584,7 +587,7 @@ class MagneticOrderingsWF:
             }})
 
         tag = "magnetic_orderings group: >>{}<<".format(uuid)
-        wf = add_tags(wf, [tag])
+        wf = add_tags(wf, [tag, ordered_structure_origins])
 
         self._wf = wf
 
