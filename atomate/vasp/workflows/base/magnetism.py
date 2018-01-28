@@ -498,7 +498,7 @@ class MagneticOrderingsWF:
                      optimize_fw=None,
                      static_fw=None,
                      perform_bader=True,
-                     num_orderings_limit=8):
+                     num_orderings_limit=9):
         """
 
         :param vasp_cmd: as elsewhere in atomate
