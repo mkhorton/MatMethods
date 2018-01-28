@@ -816,9 +816,9 @@ class MagneticOrderingsToDB(FiretaskBase):
             else:
                 successful = True
 
-            # TODO: get magnetic moments via bader analysis
+            magmoms = {"vasp": final_structure.site_properties["magmom"]}
             if self["perform_bader"]:
-                ...
+                magmoms["bader"] = d["bader"]["magmom"]
 
             summary = {
                 "formula": formula,
@@ -826,6 +826,7 @@ class MagneticOrderingsToDB(FiretaskBase):
                 "wf_meta": d["wf_meta"],  # book-keeping
                 "task_id": d["task_id"],
                 "structure": final_structure.as_dict(),
+                "magmoms": magmoms,
                 "input": {
                     "structure": input_structure.as_dict(),
                     "ordering": input_analyzer.ordering.value,
