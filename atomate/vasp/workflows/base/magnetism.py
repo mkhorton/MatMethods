@@ -17,9 +17,12 @@ from atomate.utils.utils import get_logger
 logger = get_logger(__name__)
 
 from atomate.vasp.config import VASP_CMD, DB_FILE, ADD_WF_METADATA
+
+from atomate.vasp.workflows.presets.scan import wf_scan_opt
 from uuid import uuid4
 from pymatgen.io.vasp.sets import MPRelaxSet
 from pymatgen.core import Lattice, Structure
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.analysis.magnetism.analyzer import CollinearMagneticStructureAnalyzer, Ordering
 
 __author__ = "Matthew Horton"
@@ -93,16 +96,8 @@ class MagneticOrderingsWF:
 
     def __init__(self, structure, default_magmoms=None,
                  respect_input_magmoms="replace_all",
-                 attempt_ferromagnetic=True,
-                 attempt_antiferromagnetic=True,
-                 attempt_ferrimagnetic_by_species=None,
-                 attempt_ferrimagnetic_by_motif=None,
-                 attempt_antiferromagnetic_by_motif=None,
-                 num_orderings=8,
-                 max_unique_sites=8,
-                 max_cell_size=None,
-                 timeout=5
-                 ):
+                 strategies=("ferromagnetic", "antiferromagnetic"),
+                 transformation_kwargs=None):
         """
         This workflow will try several different collinear
         magnetic orderings for a given input structure,
@@ -125,7 +120,7 @@ class MagneticOrderingsWF:
                in a spinel)
             3. We generate ordered magnetic structures, first
                antiferromagnetic, and then, if appropriate,
-               ferrimagnetic structures either by species or
+               ferrimagnetic_Cr2NiO4 structures either by species or
                by environment -- this makes use of some new
                additions to MagOrderingTransformation to allow
                the spins of different species to be coupled together
@@ -167,14 +162,8 @@ class MagneticOrderingsWF:
     necessarily be exactly num_orderings if several enumared
     structures have equivalent symmetries. Note this is also
     per strategy, so it will return num_orderings AFM orderings,
-    but also num_orderings ferrimagnetic by motif, etc. if
-    attempt_ferrimagnetic == True
-        :param max_unique_sites: The max_cell_size to consider. If
-    too large, enumeration will take a long time! By default will
-    try a sensible value (between 4 and 1 depending on number of
-    magnetic sites in primitive cell).
-        :param max_cell_size:
-        :param timeout:
+    but also num_orderings ferrimagnetic_Cr2NiO4 by motif, etc. if
+    attempt_ferrimagnetic_by_motif == True
         """
 
         self.structure = structure
@@ -184,17 +173,17 @@ class MagneticOrderingsWF:
         self.respect_input_magmoms = respect_input_magmoms
 
         # different strategies to attempt, default is usually reasonable
-        self.attempt_ferromagnetic = attempt_ferromagnetic
-        self.attempt_antiferromagnetic = attempt_antiferromagnetic
-        self.attempt_ferrimagnetic_by_motif = attempt_ferrimagnetic_by_motif
-        self.attempt_ferrimagnetic_by_species = attempt_ferrimagnetic_by_species
-        self.attempt_antiferromagnetic_by_motif = attempt_antiferromagnetic_by_motif
+        self.strategies = strategies
 
         # other settings
-        self.num_orderings = num_orderings
-        self.max_unique_sites = max_unique_sites
-        self.max_cell_size = max_cell_size
-        self.timeout = timeout
+        self.num_orderings = 64
+        self.max_unique_sites = 8
+
+        # kwargs to pass to transformation (ultimately to enumlib)
+        default_transformation_kwargs = {'check_ordered_symmetry': False, 'timeout': 5}
+        transformation_kwargs = transformation_kwargs or {}
+        transformation_kwargs.update(default_transformation_kwargs)
+        self.transformation_kwargs = transformation_kwargs
 
         # our magnetically ordered structures will be
         # stored here once generated and also store which
@@ -256,6 +245,17 @@ class MagneticOrderingsWF:
         return input_structure
 
     def _generate_transformations(self, structure):
+        """
+        The central problem with trying to enumerate magnetic orderings is
+        that we have to enumerate orderings that might plausibly be magnetic
+        ground states, while not enumerating orderings that are physically
+        implausible. The problem is that it is not always obvious by e.g.
+        symmetry arguments alone which is which. Here, we use a variety
+        of strategies (heuristics) to enumerate plausible orderings, and
+        later discard any duplicates that might be found by multiple
+        strategies. This approach is not ideal, but has been found to
+        be relatively robust over a wide range of magnetic structures.
+        """
 
         formula = structure.composition.reduced_formula
         transformations = {}
@@ -264,6 +264,10 @@ class MagneticOrderingsWF:
         analyzer = CollinearMagneticStructureAnalyzer(structure,
                                                       default_magmoms=self.default_magmoms,
                                                       overwrite_magmom_mode="replace_all")
+
+        if not analyzer.is_magnetic:
+            raise ValueError("Not detected as magnetic, add a new default magmom for the "
+                             "element you believe may be magnetic?")
 
         # now we can begin to generate our magnetic orderings
         logger.info("Generating magnetic orderings for {}".format(formula))
@@ -284,37 +288,44 @@ class MagneticOrderingsWF:
         # contains a large number of magnetic sites, perhaps we only need to enumerate
         # within one cell, whereas on the other extreme if the primitive cell only
         # contains a single magnetic site, we have to create larger supercells
-        max_cell_size = self.max_cell_size if self.max_cell_size else max(1, int(4 / num_mag_sites))
-        logger.info("Max cell size set to {}".format(max_cell_size))
+        if 'max_cell_size' not in self.transformation_kwargs:
+            self.transformation_kwargs['max_cell_size'] = max(1, int(4 / num_mag_sites))
+        logger.info("Max cell size set to {}".format(self.transformation_kwargs['max_cell_size']))
 
         # when enumerating ferrimagnetic structures, it's useful to detect
-        # co-ordination numbers on the magnetic sites, since different
+        # symmetrically distinct magnetic sites, since different
         # local environments can result in different magnetic order
         # (e.g. inverse spinels)
-        # to do this more exhaustively, could also order per Wyckoff site
-        nn = MinimumDistanceNN()
-        cns = [nn.get_cn(structure, n) for n in range(len(structure))]
+        # initially, this was done by co-ordination number, but is
+        # now done by a full symmetry analysis
+        sga = SpacegroupAnalyzer(structure)
+        structure_sym = sga.get_symmetrized_structure()
+        wyckoff = ['n/a'] * len(structure)
+        for indices, symbol in zip(structure_sym.equivalent_indices,
+                                   structure_sym.wyckoff_symbols):
+            for index in indices:
+                wyckoff[index] = symbol
         is_magnetic_sites = [True if site.specie in types_mag_species
                              else False for site in structure]
-        # we're not interested in co-ordination numbers for sites
-        # that we don't think are magnetic, set these to zero
-        cns = [cn if is_magnetic_site else 0
-               for cn, is_magnetic_site in zip(cns, is_magnetic_sites)]
-        structure.add_site_property('cn', cns)
-        unique_cns = set(cns) - {0}
+        # we're not interested in sites that we don't think are magnetic,
+        # set these symbols to None to filter them out later
+        wyckoff = [symbol if is_magnetic_site else 'n/a'
+                   for symbol, is_magnetic_site in zip(wyckoff, is_magnetic_sites)]
+        structure.add_site_property('wyckoff', wyckoff)
+        wyckoff_symbols = set(wyckoff) - {'n/a'}
 
-        # if user doesn't specifically request ferrimagnetic orderings,
+        # if user doesn't specifically request ferrimagnetic_Cr2NiO4 orderings,
         # we apply a heuristic as to whether to attempt them or not
-        if self.attempt_ferrimagnetic_by_motif is None \
-                and len(unique_cns) > 1 and len(types_mag_species) == 1:
-            self.attempt_ferrimagnetic_by_motif = True
+        if "ferrimagnetic_by_motif" not in self.strategies \
+                and len(wyckoff_symbols) > 1 and len(types_mag_species) == 1:
+            self.strategies += ("ferrimagnetic_by_motif", )
 
-        if self.attempt_ferrimagnetic_by_species is None \
+        if "ferrimagnetic_by_species" not in self.strategies \
                 and len(types_mag_species) > 1:
-            self.attempt_ferrimagnetic_by_species = True
+            self.strategies += ("ferrimagnetic_by_species", )
 
         # we start with a ferromagnetic ordering
-        if self.attempt_ferromagnetic:
+        if "ferromagnetic" in self.strategies:
             fm_structure = analyzer.get_ferromagnetic_structure()
             # store magmom as spin property, to be consistent with output from
             # other transformations
@@ -325,50 +336,70 @@ class MagneticOrderingsWF:
             self.ordered_structures.append(fm_structure)
             self.ordered_structure_origins.append("fm")
 
+
+        # we store constraint(s) for each strategy first,
+        # and then use each to perform a transformation later
+        all_constraints = {}
+
         # ...to which we can add simple AFM cases first...
-        if self.attempt_antiferromagnetic:
+        if "antiferromagnetic" in self.strategies:
+
             constraint = MagOrderParameterConstraint(
                 0.5,
                 # TODO: this list(map(str...)) can probably be removed
                 species_constraints=list(map(str, types_mag_species))
             )
+            all_constraints["afm"] = [constraint]
 
-            trans = MagOrderingTransformation(mag_species_spin,
-                                              order_parameter=[constraint],
-                                              max_cell_size=max_cell_size,
-                                              timeout=self.timeout)
-            transformations["afm"] = trans
+            # allows for non-magnetic sublattices
+            if len(types_mag_species) > 1:
+                for sp in types_mag_species:
+
+                    constraints = [
+                        MagOrderParameterConstraint(
+                            0.5,
+                            species_constraints=str(sp)
+                        )
+                    ]
+
+                    all_constraints["afm_by_{}".format(sp)] = constraints
 
         # ...and then we also try ferrimagnetic orderings by motif if a
         # single magnetic species is present...
-        if self.attempt_ferrimagnetic_by_motif:
+        if "ferrimagnetic_by_motif" in self.strategies and len(wyckoff_symbols) > 1:
 
             # these orderings are AFM on one local environment, and FM on the rest
-            for cn in unique_cns:
+            for symbol in wyckoff_symbols:
+
                 constraints = [
                     MagOrderParameterConstraint(
                         0.5,
-                        site_constraint_name='cn',
-                        site_constraints=cn
+                        site_constraint_name='wyckoff',
+                        site_constraints=symbol
                     ),
                     MagOrderParameterConstraint(
                         1.0,
-                        site_constraint_name='cn',
-                        site_constraints=list(unique_cns - {cn})
+                        site_constraint_name='wyckoff',
+                        site_constraints=list(wyckoff_symbols - {symbol})
                     )
                 ]
 
-                trans = MagOrderingTransformation(mag_species_spin,
-                                                  order_parameter=constraints,
-                                                  max_cell_size=max_cell_size,
-                                                  timeout=self.timeout)
-
-                transformations["ferrimagnetic_by_motif"] = trans
+                all_constraints["ferri_by_motif_{}".format(symbol)] = constraints
 
         # and also try ferrimagnetic when there are multiple magnetic species
-        if self.attempt_ferrimagnetic_by_species:
+        if "ferrimagnetic_by_species" in self.strategies:
+
+            sp_list = [str(site.specie) for site in structure]
+            num_sp = {sp:sp_list.count(str(sp)) for sp in types_mag_species}
+            total_mag_sites = sum(num_sp.values())
 
             for sp in types_mag_species:
+
+                # attempt via a global order parameter
+                all_constraints["ferri_by_{}".format(sp)] = num_sp[sp]/total_mag_sites
+
+                # attempt via afm on sp, fm on remaining species
+
                 constraints = [
                     MagOrderParameterConstraint(
                         0.5,
@@ -380,38 +411,34 @@ class MagneticOrderingsWF:
                     )
                 ]
 
-                trans = MagOrderingTransformation(mag_species_spin,
-                                                  order_parameter=constraints,
-                                                  max_cell_size=max_cell_size,
-                                                  timeout=self.timeout)
-
-                transformations["ferrimagnetic_by_species"] = trans
+                all_constraints["ferri_by_{}_afm".format(sp)] = constraints
 
         # ...and finally, we can try orderings that are AFM on one local
         # environment, and non-magnetic on the rest -- this is less common
         # but unless explicitly attempted, these states are unlikely to be found
-        if self.attempt_antiferromagnetic_by_motif:
+        if "antiferromagnetic_by_motif" in self.strategies:
 
-            logger.warning("Selectively performing antiferromagnetic orderings by "
-                           "motif is in beta.")
-            # TODO: ensure that zero magmom sites are not being overwritten by VaspInputSet
-            # apply spin=0 if this is an issue
+            for symbol in wyckoff_symbols:
 
-            for cn in unique_cns:
                 constraints = [
                     MagOrderParameterConstraint(
                         0.5,
-                        site_constraint_name='cn',
-                        site_constraints=cn
+                        site_constraint_name='wyckoff',
+                        site_constraints=symbol
                     )
                 ]
 
-                trans = MagOrderingTransformation(mag_species_spin,
-                                                  order_parameter=constraints,
-                                                  max_cell_size=max_cell_size,
-                                                  timeout=self.timeout)
+                all_constraints["afm_by_motif_{}".format(symbol)] = constraints
 
-                transformations["afm_by_motif"] = trans
+        # and now construct all our transformations for each strategy
+        transformations = {}
+        for name, constraints in all_constraints.items():
+
+            trans = MagOrderingTransformation(mag_species_spin,
+                                              order_parameter=constraints,
+                                              **self.transformation_kwargs)
+
+            transformations[name] = trans
 
         return transformations
 
@@ -476,6 +503,7 @@ class MagneticOrderingsWF:
         # let's add it manually and also keep a note of which structure
         # is our input: this is mostly for book-keeping/benchmarking
         self.input_index = None
+        self.input_origin = None
         if self.input_analyzer.ordering != Ordering.NM:
             matches = [self.input_analyzer.matches_ordering(s) for s in ordered_structures]
             if not any(matches):
@@ -486,6 +514,7 @@ class MagneticOrderingsWF:
                 logger.info("Input structure was found in enumerated "
                             "structures at index {}".format(matches.index(True)))
                 self.input_index = matches.index(True)
+                self.input_origin = ordered_structures_origins[self.input_index]
 
         self.ordered_structures = ordered_structures
         self.ordered_structure_origins = ordered_structures_origins
@@ -495,10 +524,9 @@ class MagneticOrderingsWF:
     def get_wf(self, vasp_cmd=VASP_CMD,
                      db_file=DB_FILE,
                      vasp_input_set_kwargs=None,
-                     optimize_fw=None,
-                     static_fw=None,
+                     scan=False,
                      perform_bader=True,
-                     num_orderings_limit=9):
+                     num_orderings_limit=10):
         """
 
         :param vasp_cmd: as elsewhere in atomate
@@ -546,21 +574,30 @@ class MagneticOrderingsWF:
             if vasp_input_set_kwargs:
                 relax_vis_kwargs.update(vasp_input_set_kwargs)
 
-            vis = MPRelaxSet(ordered_structure, **relax_vis_kwargs)
+            if not scan:
 
-            # relax
-            fws.append(OptimizeFW(ordered_structure, vasp_input_set=vis,
-                                  vasp_cmd=vasp_cmd, db_file=db_file,
-                                  max_force_threshold=0.25, # TODO: decrease
-                                  half_kpts_first_relax=False,
-                                  name=name + " optimize"))
+                vis = MPRelaxSet(ordered_structure, **relax_vis_kwargs)
 
-            # static
-            fws.append(StaticFW(ordered_structure, vasp_cmd=vasp_cmd,
-                                db_file=db_file,
-                                name=name + " static",
-                                vasp_to_db_kwargs={"perform_bader": perform_bader},
-                                prev_calc_loc=True, parents=fws[-1]))
+                # relax
+                fws.append(OptimizeFW(ordered_structure, vasp_input_set=vis,
+                                      vasp_cmd=vasp_cmd, db_file=db_file,
+                                      max_force_threshold=0.05, # TODO: decrease
+                                      half_kpts_first_relax=False,
+                                      name=name + " optimize"))
+
+                # static
+                fws.append(StaticFW(ordered_structure, vasp_cmd=vasp_cmd,
+                                    db_file=db_file,
+                                    name=name + " static",
+                                    vasp_to_db_kwargs={"perform_bader": perform_bader},
+                                    prev_calc_loc=True, parents=fws[-1]))
+
+            else:
+
+                fws.append(wf_scan_opt(ordered_structure,
+                                       c={'VASP_CMD': vasp_cmd, 'DB_FILE': db_file,
+                                          'user_incar_settings':
+                                              relax_vis_kwargs['user_incar_settings']}))
 
             analysis_parents.append(fws[-1])
 
