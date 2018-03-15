@@ -146,16 +146,7 @@ class MagneticOrderingsWF:
     to their initial magnetic moments in µB, generally these
     are chosen to be high-spin since they can relax to a low-spin
     configuration during a DFT electronic configuration
-        :param respect_input_magmoms:
-        :param attempt_ferromagnetic:
-        :param attempt_antiferromagnetic:
-        :param attempt_ferrimagnetic_by_species:
-        :param attempt_ferrimagnetic_by_motif:
-        :param attempt_antiferromagnetic_by_motif: (beta) whether or not
-    to attempt antiferromagnetic orderingon just a subset of
-    sites. This is only appropriate in some cases, use with caution.
-    In general, an oxidation-state decorated structure and/or
-    physical intuition can help in these cases.
+
         :param num_orderings: This is the number of each
     type of ordering to attempt. Since structures are grouped
     by symmetry, the number of returned structures will not
@@ -521,12 +512,11 @@ class MagneticOrderingsWF:
 
         return
 
-    def get_wf(self, vasp_cmd=VASP_CMD,
-                     db_file=DB_FILE,
-                     vasp_input_set_kwargs=None,
+    def get_wf(self, vasp_input_set_kwargs=None,
                      scan=False,
                      perform_bader=True,
-                     num_orderings_limit=10):
+                     num_orderings_limit=10,
+                    c=None):
         """
 
         :param vasp_cmd: as elsewhere in atomate
@@ -543,6 +533,8 @@ class MagneticOrderingsWF:
     Requires bader binary to be in path.
         :return:
         """
+
+        c = c or {'VASP_CMD': VASP_CMD, 'DB_FILE': DB_FILE}
 
         fws = []
         analysis_parents = []
@@ -569,40 +561,38 @@ class MagneticOrderingsWF:
 
             name = "ordering {} {} -".format(idx, analyzer.ordering.value)
 
-            # get keyword arguments for VaspInputSet
-            relax_vis_kwargs = {'user_incar_settings': {'ISYM': 0, 'LASPH': True}}
-            if vasp_input_set_kwargs:
-                relax_vis_kwargs.update(vasp_input_set_kwargs)
+            # default incar settings
+            user_incar_settings = {'ISYM': 0, 'LASPH': True}
+            user_incar_settings.update(c.get('user_incar_settings', {}))
+            c['user_incar_settings'] = user_incar_settings
 
             if not scan:
 
-                vis = MPRelaxSet(ordered_structure, **relax_vis_kwargs)
+                vis = MPRelaxSet(ordered_structure, user_incar_settings=user_incar_settings)
 
                 # relax
                 fws.append(OptimizeFW(ordered_structure, vasp_input_set=vis,
-                                      vasp_cmd=vasp_cmd, db_file=db_file,
-                                      max_force_threshold=0.05, # TODO: decrease
+                                      vasp_cmd=c['VASP_CMD'], db_file=c['DB_FILE'],
+                                      max_force_threshold=0.05,
                                       half_kpts_first_relax=False,
                                       name=name + " optimize"))
 
                 # static
-                fws.append(StaticFW(ordered_structure, vasp_cmd=vasp_cmd,
-                                    db_file=db_file,
+                fws.append(StaticFW(ordered_structure, vasp_cmd=c['VASP_CMD'],
+                                    db_file=c['DB_FILE'],
                                     name=name + " static",
                                     vasp_to_db_kwargs={"perform_bader": perform_bader},
                                     prev_calc_loc=True, parents=fws[-1]))
 
             else:
 
-                fws.append(wf_scan_opt(ordered_structure,
-                                       c={'VASP_CMD': vasp_cmd, 'DB_FILE': db_file,
-                                          'user_incar_settings':
-                                              relax_vis_kwargs['user_incar_settings']}))
+                # wf_scan_opt is just a single FireWork so can append it directly
+                fws += wf_scan_opt(ordered_structure, c=c).fws
 
             analysis_parents.append(fws[-1])
 
         uuid = str(uuid4())
-        fw_analysis = Firework(MagneticOrderingsToDB(db_file=db_file,
+        fw_analysis = Firework(MagneticOrderingsToDB(db_file=c['DB_FILE'],
                                                      wf_uuid=uuid,
                                                      auto_generated=False,
                                                      name="MagneticOrderingsToDB",
