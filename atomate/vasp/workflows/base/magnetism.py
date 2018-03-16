@@ -97,7 +97,10 @@ class MagneticOrderingsWF:
     def __init__(self, structure, default_magmoms=None,
                  respect_input_magmoms="replace_all",
                  strategies=("ferromagnetic", "antiferromagnetic"),
-                 transformation_kwargs=None):
+                 automatic=True,
+                 truncate_by_symmetry=True,
+                 transformation_kwargs=None
+                 ):
         """
         This workflow will try several different collinear
         magnetic orderings for a given input structure,
@@ -165,6 +168,11 @@ class MagneticOrderingsWF:
 
         # different strategies to attempt, default is usually reasonable
         self.strategies = strategies
+        # and whether to automatically add strategies that may be appropriate
+        self.automatic = automatic
+
+        # and whether to discard low symmetry structures
+        self.truncate_by_symmetry = truncate_by_symmetry
 
         # other settings
         self.num_orderings = 64
@@ -280,6 +288,7 @@ class MagneticOrderingsWF:
         # within one cell, whereas on the other extreme if the primitive cell only
         # contains a single magnetic site, we have to create larger supercells
         if 'max_cell_size' not in self.transformation_kwargs:
+            # TODO: change to 8
             self.transformation_kwargs['max_cell_size'] = max(1, int(4 / num_mag_sites))
         logger.info("Max cell size set to {}".format(self.transformation_kwargs['max_cell_size']))
 
@@ -307,13 +316,18 @@ class MagneticOrderingsWF:
 
         # if user doesn't specifically request ferrimagnetic_Cr2NiO4 orderings,
         # we apply a heuristic as to whether to attempt them or not
-        if "ferrimagnetic_by_motif" not in self.strategies \
-                and len(wyckoff_symbols) > 1 and len(types_mag_species) == 1:
-            self.strategies += ("ferrimagnetic_by_motif", )
+        if self.automatic:
+            if "ferrimagnetic_by_motif" not in self.strategies \
+                    and len(wyckoff_symbols) > 1 and len(types_mag_species) == 1:
+                self.strategies += ("ferrimagnetic_by_motif", )
 
-        if "ferrimagnetic_by_species" not in self.strategies \
-                and len(types_mag_species) > 1:
-            self.strategies += ("ferrimagnetic_by_species", )
+            if "antiferromagnetic_by_motif" not in self.strategies \
+                    and len(wyckoff_symbols) > 1 and len(types_mag_species) == 1:
+                self.strategies += ("antiferromagnetic_by_motif", )
+
+            if "ferrimagnetic_by_species" not in self.strategies \
+                    and len(types_mag_species) > 1:
+                self.strategies += ("ferrimagnetic_by_species", )
 
         # we start with a ferromagnetic ordering
         if "ferromagnetic" in self.strategies:
@@ -472,15 +486,16 @@ class MagneticOrderingsWF:
                                                          origin=origin)
 
         # in case we've introduced duplicates, let's remove them
+        logger.info('Pruning duplicate structures.')
         structures_to_remove = []
         for idx, ordered_structure in enumerate(ordered_structures):
             if idx not in structures_to_remove:
-                duplicate_analyzer = CollinearMagneticStructureAnalyzer(ordered_structure,
-                                                                        overwrite_magmom_mode="none")
-                matches = [duplicate_analyzer.matches_ordering(s)
-                           for s in ordered_structures]
-                structures_to_remove += [match_idx for match_idx, match in enumerate(matches)
-                                         if (match and idx != match_idx)]
+                duplicate_checker = CollinearMagneticStructureAnalyzer(ordered_structure,
+                                                                       overwrite_magmom_mode="none")
+                for check_idx, check_structure in enumerate(ordered_structures):
+                    if check_idx not in structures_to_remove and check_idx != idx:
+                        if duplicate_checker.matches_ordering(check_structure):
+                            structures_to_remove.append(check_idx)
 
         if len(structures_to_remove):
             logger.info(
@@ -489,6 +504,28 @@ class MagneticOrderingsWF:
                                   if idx not in structures_to_remove]
             ordered_structures_origins = [o for idx, o in enumerate(ordered_structures_origins)
                                           if idx not in structures_to_remove]
+
+
+        # also remove low symmetry structures
+        if self.truncate_by_symmetry:
+            logger.info('Pruning low symmetry structures.')
+            # first get a list of symmetries present
+            symmetries = sorted(list(set([s.get_space_group_info()[1]
+                                          for s in ordered_structures])), reverse=True)
+            if len(symmetries) > 5:
+                symmetries = symmetries[0:5]
+            structures_to_remove = []
+            for idx, ordered_structure in enumerate(ordered_structures):
+                if ordered_structure.get_space_group_info()[1] not in symmetries:
+                    structures_to_remove.append(idx)
+
+            if len(structures_to_remove):
+                logger.info(
+                    'Removing {} low symmetry ordered structures'.format(len(structures_to_remove)))
+                ordered_structures = [s for idx, s in enumerate(ordered_structures)
+                                      if idx not in structures_to_remove]
+                ordered_structures_origins = [o for idx, o in enumerate(ordered_structures_origins)
+                                              if idx not in structures_to_remove]
 
         # if our input structure isn't in our generated structures,
         # let's add it manually and also keep a note of which structure
@@ -606,6 +643,8 @@ class MagneticOrderingsWF:
 
         formula = self.sanitized_structure.composition.reduced_formula
         wf_name = "{} - magnetic orderings".format(formula)
+        if scan:
+            wf_name += " - SCAN"
         wf = Workflow(fws, name=wf_name)
 
         wf = add_additional_fields_to_taskdocs(wf, {
