@@ -735,12 +735,8 @@ class MagneticOrderingsToDB(FiretaskBase):
         strategy: copy of other input kwargs
     """
 
-    # TODO: this is based on other ToDB tasks, will likely change as magnetism_wf changes
-    # -mkhorton
-
-    # TODO: remove strategy?
     required_params = ["db_file", "wf_uuid", "parent_structure",
-                       "strategy", "perform_bader"]
+                       "perform_bader", "scan"]
     optional_params = ["origins", "input_index"]
 
     def run_task(self, fw_spec):
@@ -755,8 +751,9 @@ class MagneticOrderingsToDB(FiretaskBase):
         formula_pretty = self["parent_structure"].composition.reduced_formula
 
         # get ground state energy
+        task_label_regex = 'static' if not self['scan'] else 'optimize'
         docs = list(mmdb.collection.find({"wf_meta.wf_uuid": uuid,
-                                          "task_label": {"$regex": "static"}},
+                                          "task_label": {"$regex": task_label_regex}},
                                          ["task_id", "output.energy_per_atom"]))
 
         energies = [d["output"]["energy_per_atom"] for d in docs]

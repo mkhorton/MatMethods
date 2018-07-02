@@ -1,6 +1,7 @@
 # coding: utf-8
 
 import os
+import warnings
 
 from atomate.vasp.fireworks.core import OptimizeFW, StaticFW
 from fireworks import Workflow, Firework
@@ -20,6 +21,7 @@ from atomate.vasp.config import VASP_CMD, DB_FILE, ADD_WF_METADATA
 
 from atomate.vasp.workflows.presets.scan import wf_scan_opt
 from uuid import uuid4
+from pymatgen.symmetry.groups import SpaceGroup
 from pymatgen.io.vasp.sets import MPRelaxSet
 from pymatgen.core import Lattice, Structure
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
@@ -38,19 +40,22 @@ module_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)))
 
 
 def get_wf_magnetic_deformation(structure,
-                                common_params=None,
+                                c=None,
                                 vis=None):
     """
     Minimal workflow to obtain magnetic deformation proxy, as
     defined by Bocarsly et al. 2017, doi: 10.1021/acs.chemmater.6b04729
 
-    :param structure: input structure, must be structure with magnetic
+    Args:
+        structure: input structure, must be structure with magnetic
     elements, such that pymatgen will initalize ferromagnetic input by
     default -- see MPRelaxSet.yaml for list of default elements
-    :param common_params (dict): Workflow config dict, in the same format
-    as in presets/core.py
-    :param vis: (VaspInputSet) A VaspInputSet to use for the first FW
-    :return:
+        c: Workflow config dict, in the same format
+    as in presets/core.py and elsewhere in atomate
+        vis: A VaspInputSet to use for the first FW
+
+    Returns: Workflow
+
     """
 
     if not structure.is_ordered:
@@ -63,8 +68,8 @@ def get_wf_magnetic_deformation(structure,
     uuid = str(uuid4())
 
     c = {'vasp_cmd': VASP_CMD, 'db_file': DB_FILE}
-    if common_params:
-        c.update(common_params)
+    if c:
+        c.update(c)
 
     wf = get_wf(structure, "magnetic_deformation.yaml",
                 common_params=c, vis=vis)
@@ -101,6 +106,19 @@ class MagneticOrderingsWF:
                  truncate_by_symmetry=True,
                  transformation_kwargs=None
                  ):
+        """
+
+        Args:
+            structure:
+            default_magmoms:
+            respect_input_magmoms:
+            strategies:
+            automatic:
+            truncate_by_symmetry:
+            transformation_kwargs:
+        """
+
+
         """
         This workflow will try several different collinear
         magnetic orderings for a given input structure,
@@ -226,6 +244,10 @@ class MagneticOrderingsWF:
 
 
     def _sanitize_input_structure(self, input_structure):
+        """
+        Sanitize our input structure by removing magnetic information
+        and making primitive.
+        """
 
         input_structure = input_structure.copy()
 
@@ -249,11 +271,11 @@ class MagneticOrderingsWF:
         that we have to enumerate orderings that might plausibly be magnetic
         ground states, while not enumerating orderings that are physically
         implausible. The problem is that it is not always obvious by e.g.
-        symmetry arguments alone which is which. Here, we use a variety
-        of strategies (heuristics) to enumerate plausible orderings, and
-        later discard any duplicates that might be found by multiple
-        strategies. This approach is not ideal, but has been found to
-        be relatively robust over a wide range of magnetic structures.
+        symmetry arguments alone which orderings to prefer. Here, we use a
+        variety of strategies (heuristics) to enumerate plausible orderings,
+        and later discard any duplicates that might be found by multiple
+        strategies. This approach is not ideal, but has been found to be
+        relatively robust over a wide range of magnetic structures.
         """
 
         formula = structure.composition.reduced_formula
@@ -272,7 +294,9 @@ class MagneticOrderingsWF:
         logger.info("Generating magnetic orderings for {}".format(formula))
 
         mag_species_spin = analyzer.magnetic_species_and_magmoms
-        types_mag_species = analyzer.types_of_magnetic_specie
+        types_mag_species = sorted(analyzer.types_of_magnetic_specie,
+                                   key=lambda sp: analyzer.default_magmoms.get(str(sp), 0),
+                                   reverse=True)
         types_mag_elements = {sp.symbol for sp in types_mag_species}
         num_mag_sites = analyzer.number_of_magnetic_sites
         num_unique_sites = analyzer.number_of_unique_magnetic_sites()
@@ -288,8 +312,8 @@ class MagneticOrderingsWF:
         # within one cell, whereas on the other extreme if the primitive cell only
         # contains a single magnetic site, we have to create larger supercells
         if 'max_cell_size' not in self.transformation_kwargs:
-            # TODO: change to 8
-            self.transformation_kwargs['max_cell_size'] = max(1, int(4 / num_mag_sites))
+            # TODO: change to 8 / num_mag_sites ?
+            self.transformation_kwargs['max_cell_size'] = max(1, int(8 / num_mag_sites))
         logger.info("Max cell size set to {}".format(self.transformation_kwargs['max_cell_size']))
 
         # when enumerating ferrimagnetic structures, it's useful to detect
@@ -331,6 +355,9 @@ class MagneticOrderingsWF:
 
         # we start with a ferromagnetic ordering
         if "ferromagnetic" in self.strategies:
+
+            # TODO: remove 0 spins !
+
             fm_structure = analyzer.get_ferromagnetic_structure()
             # store magmom as spin property, to be consistent with output from
             # other transformations
@@ -448,6 +475,11 @@ class MagneticOrderingsWF:
         return transformations
 
     def _generate_ordered_structures(self, sanitized_input_structure, transformations):
+        """
+        Apply our input structure to our list of transformations and output a list
+        of ordered structures that have been pruned for duplicates and for those
+        with low symmetry (optional).
+        """
 
         ordered_structures = self.ordered_structures
         ordered_structures_origins = self.ordered_structure_origins
@@ -505,27 +537,45 @@ class MagneticOrderingsWF:
             ordered_structures_origins = [o for idx, o in enumerate(ordered_structures_origins)
                                           if idx not in structures_to_remove]
 
-
         # also remove low symmetry structures
         if self.truncate_by_symmetry:
-            logger.info('Pruning low symmetry structures.')
-            # first get a list of symmetries present
-            symmetries = sorted(list(set([s.get_space_group_info()[1]
-                                          for s in ordered_structures])), reverse=True)
-            if len(symmetries) > 5:
-                symmetries = symmetries[0:5]
-            structures_to_remove = []
-            for idx, ordered_structure in enumerate(ordered_structures):
-                if ordered_structure.get_space_group_info()[1] not in symmetries:
-                    structures_to_remove.append(idx)
 
-            if len(structures_to_remove):
-                logger.info(
-                    'Removing {} low symmetry ordered structures'.format(len(structures_to_remove)))
-                ordered_structures = [s for idx, s in enumerate(ordered_structures)
-                                      if idx not in structures_to_remove]
-                ordered_structures_origins = [o for idx, o in enumerate(ordered_structures_origins)
-                                              if idx not in structures_to_remove]
+            # by default, keep structures with 5 most symmetric space groups
+            if not isinstance(self.truncate_by_symmetry, int):
+                self.truncate_by_symmetry = 5
+
+            logger.info('Pruning low symmetry structures.')
+
+            # first get a list of symmetries present
+            symmetry_int_numbers = [s.get_space_group_info()[1]
+                                    for s in ordered_structures]
+
+            # then count the number of symmetry operations for that space group
+            num_sym_ops = [len(SpaceGroup.from_int_number(n).symmetry_ops)
+                           for n in symmetry_int_numbers]
+
+            # find the largest values...
+            max_symmetries = sorted(list(set(num_sym_ops)), reverse=True)
+
+            # ...and decide which ones to keep
+            if len(max_symmetries) > self.truncate_by_symmetry:
+                max_symmetries = max_symmetries[0:5]
+            structs_to_keep = [(idx, num) for idx, num in enumerate(num_sym_ops)
+                               if num in max_symmetries]
+
+            # sort so that highest symmetry structs are first
+            structs_to_keep = sorted(structs_to_keep, key=lambda x: (x[1], -x[0]), reverse=True)
+
+            logger.info('Removing {} low symmetry '
+                        'ordered structures'.format(len(ordered_structures) - len(structs_to_keep)))
+
+            ordered_structures = [ordered_structures[i] for i, _ in structs_to_keep]
+            ordered_structures_origins = [ordered_structures_origins[i] for i, _ in structs_to_keep]
+
+            # and ensure fm is always at index 0
+            fm_index = ordered_structures_origins.index('fm')
+            ordered_structures.insert(0, ordered_structures.pop(fm_index))
+            ordered_structures_origins.insert(0, ordered_structures_origins.pop(fm_index))
 
         # if our input structure isn't in our generated structures,
         # let's add it manually and also keep a note of which structure
@@ -552,23 +602,20 @@ class MagneticOrderingsWF:
     def get_wf(self, vasp_input_set_kwargs=None,
                      scan=False,
                      perform_bader=True,
-                     num_orderings_limit=10,
-                    c=None):
+                     num_orderings_soft_limit=8,
+                     num_orderings_hard_limit=16,
+                     c=None):
         """
 
-        :param vasp_cmd: as elsewhere in atomate
-        :param db_file: as elsewhere in atomate (calculations
-        will be added to "tasks" collection, and summary of
-        orderings to "magnetic_orderings" collection)
-        :param vasp_input_set_kwargs: kwargs to pass to the
-    vasp input set, the default is `{'user_incar_settings':
-    {'ISYM': 0, 'LASPH': True}`
-        :param optimize_fw:
-        :param static_fw:
-        :param perform_bader: Perform Bader analysis (can
-    provide a more robust measure of per-atom magnetic moments).
-    Requires bader binary to be in path.
-        :return:
+        Args:
+            vasp_input_set_kwargs:
+            scan:
+            perform_bader:
+            num_orderings_limit:
+            c:
+
+        Returns:
+
         """
 
         c = c or {'VASP_CMD': VASP_CMD, 'DB_FILE': DB_FILE}
@@ -581,27 +628,27 @@ class MagneticOrderingsWF:
         # change enumeration strategies
         ordered_structures = self.ordered_structures
         ordered_structure_origins = self.ordered_structure_origins
-        if num_orderings_limit and len(self.ordered_structures) > num_orderings_limit:
-            ordered_structures = self.ordered_structures[0:num_orderings_limit]
-            ordered_structure_origins = self.ordered_structure_origins[0:num_orderings_limit]
+        if num_orderings_hard_limit and len(self.ordered_structures) > num_orderings_hard_limit:
+            ordered_structures = self.ordered_structures[0:num_orderings_hard_limit]
+            ordered_structure_origins = self.ordered_structure_origins[0:num_orderings_hard_limit]
             logger.warning("Number of ordered structures exceeds hard limit, "
                            "removing last {} structures.".format(len(self.ordered_structures)-
                                                                  len(ordered_structures)))
             # always make sure input structure is included
-            if self.input_index and self.input_index > num_orderings_limit:
+            if self.input_index and self.input_index > num_orderings_hard_limit:
                 ordered_structures.append(self.ordered_structures[self.input_index])
                 ordered_structure_origins.append(self.ordered_structure_origins[self.input_index])
+
+        # default incar settings
+        user_incar_settings = {'ISYM': 0, 'LASPH': True, 'EDIFFG': -0.05}
+        user_incar_settings.update(c.get('user_incar_settings', {}))
+        c['user_incar_settings'] = user_incar_settings
 
         for idx, ordered_structure in enumerate(ordered_structures):
 
             analyzer = CollinearMagneticStructureAnalyzer(ordered_structure)
 
             name = "ordering {} {} -".format(idx, analyzer.ordering.value)
-
-            # default incar settings
-            user_incar_settings = {'ISYM': 0, 'LASPH': True}
-            user_incar_settings.update(c.get('user_incar_settings', {}))
-            c['user_incar_settings'] = user_incar_settings
 
             if not scan:
 
@@ -634,10 +681,10 @@ class MagneticOrderingsWF:
                                                      auto_generated=False,
                                                      name="MagneticOrderingsToDB",
                                                      parent_structure=self.sanitized_structure,
-                                                     strategy=vasp_input_set_kwargs,
                                                      origins=ordered_structure_origins,
                                                      input_index=self.input_index,
-                                                     perform_bader=perform_bader),
+                                                     perform_bader=perform_bader,
+                                                     scan=scan),
                                name="Magnetic Orderings Analysis", parents=analysis_parents)
         fws.append(fw_analysis)
 
@@ -664,7 +711,7 @@ class MagneticOrderingsWF:
 
 if __name__ == "__main__":
 
-    # for trying workflow
+    # for trying workflows
 
     from fireworks import LaunchPad
 
