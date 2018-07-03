@@ -313,7 +313,7 @@ class MagneticOrderingsWF:
         # contains a single magnetic site, we have to create larger supercells
         if 'max_cell_size' not in self.transformation_kwargs:
             # TODO: change to 8 / num_mag_sites ?
-            self.transformation_kwargs['max_cell_size'] = max(1, int(8 / num_mag_sites))
+            self.transformation_kwargs['max_cell_size'] = max(1, int(4 / num_mag_sites))
         logger.info("Max cell size set to {}".format(self.transformation_kwargs['max_cell_size']))
 
         # when enumerating ferrimagnetic structures, it's useful to detect
@@ -665,7 +665,6 @@ class MagneticOrderingsWF:
                 fws.append(StaticFW(ordered_structure, vasp_cmd=c['VASP_CMD'],
                                     db_file=c['DB_FILE'],
                                     name=name + " static",
-                                    vasp_to_db_kwargs={"perform_bader": perform_bader},
                                     prev_calc_loc=True, parents=fws[-1]))
 
             else:
