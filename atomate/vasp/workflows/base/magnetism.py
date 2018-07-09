@@ -609,7 +609,7 @@ class MagneticOrderingsWF:
 
         Args:
             vasp_input_set_kwargs:
-            scan:
+             scan:
             perform_bader:
             num_orderings_limit:
             c:

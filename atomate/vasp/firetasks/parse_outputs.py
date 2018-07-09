@@ -731,7 +731,6 @@ class MagneticOrderingsToDB(FiretaskBase):
         used to make it easier to retrieve task docs
         parent_structure: Structure of parent crystal (not magnetically
         ordered)
-        strategy: copy of other input kwargs
     """
 
     required_params = ["db_file", "wf_uuid", "parent_structure",
@@ -750,7 +749,7 @@ class MagneticOrderingsToDB(FiretaskBase):
         formula_pretty = self["parent_structure"].composition.reduced_formula
 
         # get ground state energy
-        task_label_regex = 'static' if not self['scan'] else 'optimize'
+        task_label_regex = 'static' if not self['scan'] else 'optimization'
         docs = list(mmdb.collection.find({"wf_meta.wf_uuid": uuid,
                                           "task_label": {"$regex": task_label_regex}},
                                          ["task_id", "output.energy_per_atom"]))
@@ -765,7 +764,7 @@ class MagneticOrderingsToDB(FiretaskBase):
 
         # get results for different orderings
         docs = list(mmdb.collection.find({
-            "task_label": {"$regex": "static"},
+            "task_label": {"$regex": task_label_regex},
             "wf_meta.wf_uuid": uuid
         }))
 
@@ -856,8 +855,7 @@ class MagneticOrderingsToDB(FiretaskBase):
                     "symmetry": input_structure.get_space_group_info()[0],
                     "index": ordering_index,
                     "origin": ordering_origin,
-                    "input_index": self.get("input_index", None),
-                    "strategy": self["strategy"]
+                    "input_index": self.get("input_index", None)
                 },
                 "ordering": final_analyzer.ordering.value,
                 "ordering_changed": ordering_changed,
