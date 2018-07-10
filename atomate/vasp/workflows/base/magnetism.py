@@ -673,8 +673,9 @@ class MagneticOrderingsWF:
                 # wf_scan_opt is just a single FireWork so can append it directly
                 scan_fws = wf_scan_opt(ordered_structure, c=c).fws
                 # change name for consistency with non-SCAN
-                scan_fws[0].name = scan_fws[0].name.replace('structure optimization',
-                                                            name + " optimize")
+                new_name = scan_fws[0].name.replace('structure optimization', name + " optimize")
+                scan_fws[0].name = new_name
+                scan_fws[0].tasks[-1]["additional_fields"]["task_label"] = new_name
                 fws += scan_fws
 
             analysis_parents.append(fws[-1])
