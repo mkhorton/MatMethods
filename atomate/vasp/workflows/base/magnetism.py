@@ -667,10 +667,15 @@ class MagneticOrderingsWF:
                                     name=name + " static",
                                     prev_calc_loc=True, parents=fws[-1]))
 
+
             else:
 
                 # wf_scan_opt is just a single FireWork so can append it directly
-                fws += wf_scan_opt(ordered_structure, c=c).fws
+                scan_fws = wf_scan_opt(ordered_structure, c=c).fws
+                # change name for consistency with non-SCAN
+                scan_fws[0].name = scan_fws[0].name.replace('structure optimization',
+                                                            name + " optimize")
+                fws += scan_fws
 
             analysis_parents.append(fws[-1])
 
@@ -684,7 +689,8 @@ class MagneticOrderingsWF:
                                                      input_index=self.input_index,
                                                      perform_bader=perform_bader,
                                                      scan=scan),
-                               name="Magnetic Orderings Analysis", parents=analysis_parents)
+                               name="Magnetic Orderings Analysis", parents=analysis_parents,
+                               spec={'_allow_fizzled_parents': True})
         fws.append(fw_analysis)
 
         formula = self.sanitized_structure.composition.reduced_formula
