@@ -749,7 +749,7 @@ class MagneticOrderingsToDB(FiretaskBase):
         formula_pretty = self["parent_structure"].composition.reduced_formula
 
         # get ground state energy
-        task_label_regex = 'static' if not self['scan'] else 'optimization'
+        task_label_regex = 'static' if not self['scan'] else 'optimize'
         docs = list(mmdb.collection.find({"wf_meta.wf_uuid": uuid,
                                           "task_label": {"$regex": task_label_regex}},
                                          ["task_id", "output.energy_per_atom"]))
