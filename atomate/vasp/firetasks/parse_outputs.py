@@ -752,7 +752,10 @@ class MagneticOrderingsToDB(FiretaskBase):
         task_label_regex = 'static' if not self['scan'] else 'optimize'
         docs = list(mmdb.collection.find({"wf_meta.wf_uuid": uuid,
                                           "task_label": {"$regex": task_label_regex}},
-                                         ["task_id", "output.energy_per_atom"]))
+                                         ["task_id", "output.energy_per_atom",
+                                          "calcs_reversed.output.outcar.total_magnetization",
+                                          "calcs_reversed.composition_reduced",
+                                          "calcs_reversed.composition_unit_cell"]))
 
         energies = [d["output"]["energy_per_atom"] for d in docs]
         ground_state_energy = min(energies)
@@ -789,8 +792,8 @@ class MagneticOrderingsToDB(FiretaskBase):
             input_analyzer = CollinearMagneticStructureAnalyzer(input_structure, threshold=0.7)
             final_analyzer = CollinearMagneticStructureAnalyzer(final_structure, threshold=0.7)
 
-            ordering_changed = final_analyzer.ordering == input_analyzer.ordering
-            symmetry_changed = final_structure.get_space_group_info()[0] == input_structure.get_space_group_info()[0]
+            ordering_changed = not (final_analyzer.matches_ordering(input_structure))
+            symmetry_changed = (final_structure.get_space_group_info()[0] == input_structure.get_space_group_info()[0])
 
             if d["task_id"] == ground_state_task_id:
                 stable = True
@@ -816,7 +819,6 @@ class MagneticOrderingsToDB(FiretaskBase):
                 ordering_origin = None
 
             # note if a magnetic structure relaxes to a non-magnetic structure
-            # TODO: filter out 0.6 magmoms?
             if input_analyzer.ordering != Ordering.NM \
                     and final_analyzer.ordering == Ordering.NM:
                 successful = False
@@ -841,6 +843,12 @@ class MagneticOrderingsToDB(FiretaskBase):
                     except Exception as e:
                         magmoms["bader"] = "Bader analysis failed: {}".format(e)
 
+            total_magnetization = abs(d["calcs_reversed"][0]["output"]["outcar"]["total_magnetization"])
+            num_formula_units = sum(d["calcs_reversed"][0]["composition_reduced"].values())/\
+                                sum(d["calcs_reversed"][0]["composition_unit_cell"].values())
+            total_magnetization_per_formula_unit = total_magnetization/num_formula_units
+            total_magnetization_per_unit_volume = total_magnetization/final_structure.volume
+
             summary = {
                 "formula": formula,
                 "formula_pretty": formula_pretty,
@@ -857,6 +865,9 @@ class MagneticOrderingsToDB(FiretaskBase):
                     "origin": ordering_origin,
                     "input_index": self.get("input_index", None)
                 },
+                "total_magnetization": total_magnetization,
+                "total_magnetization_per_formula_unit": total_magnetization_per_formula_unit,
+                "total_magnetization_per_unit_volume": total_magnetization/final_structure.volume,
                 "ordering": final_analyzer.ordering.value,
                 "ordering_changed": ordering_changed,
                 "symmetry": final_structure.get_space_group_info()[0],
