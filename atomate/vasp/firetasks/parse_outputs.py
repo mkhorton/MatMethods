@@ -789,15 +789,6 @@ class MagneticOrderingsToDB(FiretaskBase):
             input_analyzer = CollinearMagneticStructureAnalyzer(input_structure, threshold=0.61)
             final_analyzer = CollinearMagneticStructureAnalyzer(final_structure, threshold=0.61)
 
-            input_order_check = [0 if m < 0.61 else m for m in input_magmoms]
-            final_order_check = [0 if m < 0.61 else m
-                                 for m in final_structure.site_properties['magmom']]
-            ordering_changed = not np.array_equal(np.sign(input_order_check),
-                                                  np.sign(final_order_check))
-
-            symmetry_changed = (final_structure.get_space_group_info()[0]
-                                != input_structure.get_space_group_info()[0])
-
             if d["task_id"] == ground_state_task_id:
                 stable = True
                 decomposes_to = None
@@ -821,7 +812,8 @@ class MagneticOrderingsToDB(FiretaskBase):
             else:
                 ordering_origin = None
 
-            magmoms = {"vasp": final_structure.site_properties["magmom"]}
+            final_magmoms = final_structure.site_properties["magmom"]
+            magmoms = {"vasp": final_magmoms}
             if self["perform_bader"]:
                 # if bader has already been run during task ingestion,
                 # use existing analysis
@@ -836,8 +828,18 @@ class MagneticOrderingsToDB(FiretaskBase):
                         if ":" in dir_name:
                             dir_name = dir_name.split(":")[1]
                         magmoms["bader"] = bader_analysis_from_path(dir_name)["magmom"]
+                        # prefer bader magmoms if we have them
+                        final_magmoms = magmoms["bader"]
                     except Exception as e:
                         magmoms["bader"] = "Bader analysis failed: {}".format(e)
+
+            input_order_check = [0 if m < 0.61 else m for m in input_magmoms]
+            final_order_check = [0 if m < 0.61 else m for m in final_magmoms]
+            ordering_changed = not np.array_equal(np.sign(input_order_check),
+                                                  np.sign(final_order_check))
+
+            symmetry_changed = (final_structure.get_space_group_info()[0]
+                                != input_structure.get_space_group_info()[0])
 
             total_magnetization = abs(d["calcs_reversed"][0]["output"]["outcar"]["total_magnetization"])
             num_formula_units = sum(d["calcs_reversed"][0]["composition_reduced"].values())/\
