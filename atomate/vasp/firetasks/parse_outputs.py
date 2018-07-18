@@ -833,8 +833,8 @@ class MagneticOrderingsToDB(FiretaskBase):
                     except Exception as e:
                         magmoms["bader"] = "Bader analysis failed: {}".format(e)
 
-            input_order_check = [0 if m < 0.61 else m for m in input_magmoms]
-            final_order_check = [0 if m < 0.61 else m for m in final_magmoms]
+            input_order_check = [0 if abs(m) < 0.61 else m for m in input_magmoms]
+            final_order_check = [0 if abs(m) < 0.61 else m for m in final_magmoms]
             ordering_changed = not np.array_equal(np.sign(input_order_check),
                                                   np.sign(final_order_check))
 
