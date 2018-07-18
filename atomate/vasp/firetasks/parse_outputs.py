@@ -752,10 +752,7 @@ class MagneticOrderingsToDB(FiretaskBase):
         task_label_regex = 'static' if not self['scan'] else 'optimize'
         docs = list(mmdb.collection.find({"wf_meta.wf_uuid": uuid,
                                           "task_label": {"$regex": task_label_regex}},
-                                         ["task_id", "output.energy_per_atom",
-                                          "calcs_reversed.output.outcar.total_magnetization",
-                                          "calcs_reversed.composition_reduced",
-                                          "calcs_reversed.composition_unit_cell"]))
+                                         ["task_id", "output.energy_per_atom"]))
 
         energies = [d["output"]["energy_per_atom"] for d in docs]
         ground_state_energy = min(energies)
@@ -789,11 +786,17 @@ class MagneticOrderingsToDB(FiretaskBase):
             # picking a fairly large threshold so that default 0.6 µB magmoms don't
             # cause problems with analysis, this is obviously not approriate for
             # some magnetic structures with small magnetic moments (e.g. CuO)
-            input_analyzer = CollinearMagneticStructureAnalyzer(input_structure, threshold=0.7)
-            final_analyzer = CollinearMagneticStructureAnalyzer(final_structure, threshold=0.7)
+            input_analyzer = CollinearMagneticStructureAnalyzer(input_structure, threshold=0.61)
+            final_analyzer = CollinearMagneticStructureAnalyzer(final_structure, threshold=0.61)
 
-            ordering_changed = not (final_analyzer.matches_ordering(input_structure))
-            symmetry_changed = (final_structure.get_space_group_info()[0] == input_structure.get_space_group_info()[0])
+            input_order_check = [0 if m < 0.61 else m for m in input_magmoms]
+            final_order_check = [0 if m < 0.61 else m
+                                 for m in final_structure.site_properties['magmom']]
+            ordering_changed = not np.array_equal(np.sign(input_order_check),
+                                                  np.sign(final_order_check))
+
+            symmetry_changed = (final_structure.get_space_group_info()[0]
+                                != input_structure.get_space_group_info()[0])
 
             if d["task_id"] == ground_state_task_id:
                 stable = True
@@ -817,13 +820,6 @@ class MagneticOrderingsToDB(FiretaskBase):
                 ordering_origin = self["origins"][ordering_index]
             else:
                 ordering_origin = None
-
-            # note if a magnetic structure relaxes to a non-magnetic structure
-            if input_analyzer.ordering != Ordering.NM \
-                    and final_analyzer.ordering == Ordering.NM:
-                successful = False
-            else:
-                successful = True
 
             magmoms = {"vasp": final_structure.site_properties["magmom"]}
             if self["perform_bader"]:
@@ -867,7 +863,7 @@ class MagneticOrderingsToDB(FiretaskBase):
                 },
                 "total_magnetization": total_magnetization,
                 "total_magnetization_per_formula_unit": total_magnetization_per_formula_unit,
-                "total_magnetization_per_unit_volume": total_magnetization/final_structure.volume,
+                "total_magnetization_per_unit_volume": total_magnetization_per_unit_volume,
                 "ordering": final_analyzer.ordering.value,
                 "ordering_changed": ordering_changed,
                 "symmetry": final_structure.get_space_group_info()[0],
