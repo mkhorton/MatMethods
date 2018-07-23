@@ -875,7 +875,6 @@ class MagneticOrderingsToDB(FiretaskBase):
                 "decomposes_to": decomposes_to,
                 "energy_above_ground_state_per_atom": energy_above_ground_state_per_atom,
                 "energy_diff_relax_static": energy_diff_relax_static,
-                "successful": successful,
                 "created_at": datetime.utcnow()
             }
 
