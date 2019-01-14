@@ -55,7 +55,6 @@ def get_wf_magnetic_deformation(structure,
         vis: A VaspInputSet to use for the first FW
 
     Returns: Workflow
-
     """
 
     if not structure.is_ordered:
@@ -107,20 +106,7 @@ class MagneticOrderingsWF:
                  transformation_kwargs=None
                  ):
         """
-
-        Args:
-            structure:
-            default_magmoms:
-            respect_input_magmoms:
-            strategies:
-            automatic:
-            truncate_by_symmetry:
-            transformation_kwargs:
-        """
-
-
-        """
-        This workflow will try several different collinear
+                This workflow will try several different collinear
         magnetic orderings for a given input structure,
         and output a summary to a dedicated database
         collection, magnetic_orderings, in the supplied
@@ -159,14 +145,24 @@ class MagneticOrderingsWF:
                a magnetic structure obtained by experiment, to measure
                the performance of the workflow.
 
+        :param structure: input structure
+        :param default_magmoms: (optional, defaults provided) dict of
+        magnetic elements to their initial magnetic moments in µB, generally
+        these are chosen to be high-spin since they can relax to a low-spin
+        configuration during a DFT electronic configuration
+        :param respect_input_magmoms:
+        :param strategies:
+        :param automatic:
+        :param truncate_by_symmetry:
+        :param transformation_kwargs:
+        """
 
-        :param structure: input structure, may be a generic crystal
-    structure, or a structure with magnetic moments already
-    defined (e.g. from experiment)
-        :param default_magmoms: dict of magnetic elements
-    to their initial magnetic moments in µB, generally these
-    are chosen to be high-spin since they can relax to a low-spin
-    configuration during a DFT electronic configuration
+        """
+
+
+
+        :param structure: 
+        :param default_magmoms: 
 
         :param num_orderings: This is the number of each
     type of ordering to attempt. Since structures are grouped
@@ -607,15 +603,21 @@ class MagneticOrderingsWF:
                      c=None):
         """
 
-        Args:
-            vasp_input_set_kwargs:
-             scan:
-            perform_bader:
-            num_orderings_limit:
-            c:
-
-        Returns:
-
+        :param vasp_input_set_kwargs:
+        :param scan: if True, use the SCAN functional instead of GGA+U, since
+        the SCAN functional has shown to have improved performance for
+        magnetic systems in some cases
+        :param perform_bader: if True, make sure the "bader" binary is in your
+        path, will use Bader analysis to calculate atom-projected magnetic
+        moments
+        :param num_orderings_soft_limit: will make sure total number of magnetic
+        orderings does not exceed this number, unless there are extra magnetic
+        orderings of equivalent symmetry
+        :param num_orderings_hard_limit: will make sure total number of magnetic
+        orderings does not exceed this number even if there are extra orderings
+        of equivalent symmetry
+        :param c: additional config dict (as in elsewhere in atomate)
+        :return:
         """
 
         c = c or {'VASP_CMD': VASP_CMD, 'DB_FILE': DB_FILE}
