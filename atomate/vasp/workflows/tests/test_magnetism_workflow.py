@@ -30,14 +30,9 @@ enum_cmd = which('enum.x') or which('multienum.x')
 makestr_cmd = which('makestr.x') or which('makeStr.x') or which('makeStr.py')
 enumlib_present = enum_cmd and makestr_cmd
 
+
 @unittest.skipIf(not enumlib_present, "enumlib not present")
 class TestMagnetismWorkflow(unittest.TestCase):
-
-    #def setUp(self, lpad=True):
-    #    super(TestMagnetismWorkflow, self).setUp()
-
-    def test_magnetic_deformation_workflow(self):
-        pass
 
     def test_magnetic_orderings_workflow(self):
 
@@ -56,10 +51,11 @@ class TestMagnetismWorkflow(unittest.TestCase):
         wf = MagneticOrderingsWF(structure)
         self.assertEqual(wf.input_origin, "afm_by_Cr")
 
-        # afm requiring large cell size
-        structure = Structure.from_file(os.path.join(ref_dir, "CuO.json"))
-        wf = MagneticOrderingsWF(structure, transformation_kwargs={'max_cell_size': 4})
-        self.assertEqual(wf.input_origin, "afm")
+        # afm requiring large cell size (enable for development, too slow for CI)
+        #structure = Structure.from_file(os.path.join(ref_dir, "CuO.json"))
+        #wf = MagneticOrderingsWF(structure, default_magmoms={'Cu': 1.73},
+        #                         transformation_kwargs={'max_cell_size': 4})
+        #self.assertEqual(wf.input_origin, "afm")
 
         # antiferromagnetic by structural motif
         structure = Structure.from_file(os.path.join(ref_dir, "Ca3Co2O6.json"))
@@ -68,10 +64,3 @@ class TestMagnetismWorkflow(unittest.TestCase):
                                  truncate_by_symmetry=False,
                                  transformation_kwargs={'max_cell_size': 2})
         self.assertEqual(wf.input_origin, "afm_by_motif_2a")
-
-
-    def test_parse_outputs_magnetic_deformation(self):
-        pass
-
-    def test_parse_outputs_magnetic_orderings(self):
-        pass
