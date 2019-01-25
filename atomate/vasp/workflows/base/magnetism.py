@@ -1,7 +1,6 @@
 # coding: utf-8
 
 import os
-import warnings
 
 from atomate.vasp.fireworks.core import OptimizeFW, StaticFW
 from fireworks import Workflow, Firework
@@ -21,7 +20,6 @@ from pymatgen.transformations.advanced_transformations import (
     MagOrderParameterConstraint,
     MagOrderingTransformation,
 )
-from pymatgen.analysis.local_env import MinimumDistanceNN
 
 from atomate.utils.utils import get_logger
 
@@ -43,7 +41,7 @@ from pymatgen.analysis.magnetism.analyzer import (
 __author__ = "Matthew Horton"
 __maintainer__ = "Matthew Horton"
 __email__ = "mkhorton@lbl.gov"
-__status__ = "Development"
+__status__ = "Production"
 __date__ = "March 2017"
 
 __magnetic_deformation_wf_version__ = 1.2
@@ -246,7 +244,8 @@ class MagneticOrderingsWF:
             self.sanitized_structure, self.transformations
         )
 
-    def _sanitize_input_structure(self, input_structure):
+    @staticmethod
+    def _sanitize_input_structure( input_structure):
         """
         Sanitize our input structure by removing magnetic information
         and making primitive.
@@ -306,7 +305,6 @@ class MagneticOrderingsWF:
             key=lambda sp: analyzer.default_magmoms.get(str(sp), 0),
             reverse=True,
         )
-        types_mag_elements = {sp.symbol for sp in types_mag_species}
         num_mag_sites = analyzer.number_of_magnetic_sites
         num_unique_sites = analyzer.number_of_unique_magnetic_sites()
 

@@ -51,7 +51,8 @@ class TestMagnetismWorkflow(unittest.TestCase):
         wf = MagneticOrderingsWF(structure)
         self.assertEqual(wf.input_origin, "afm_by_Cr")
 
-        # afm requiring large cell size (enable for development, too slow for CI)
+        # afm requiring large cell size
+        # (enable for further development, too slow for CI)
         #structure = Structure.from_file(os.path.join(ref_dir, "CuO.json"))
         #wf = MagneticOrderingsWF(structure, default_magmoms={'Cu': 1.73},
         #                         transformation_kwargs={'max_cell_size': 4})

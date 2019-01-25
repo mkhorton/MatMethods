@@ -888,6 +888,7 @@ class MagneticOrderingsToDB(FiretaskBase):
 
         logger.info("Magnetic orderings calculation complete.")
 
+
 @explicit_serialize
 class MagneticDeformationToDB(FiretaskBase):
     """
@@ -920,13 +921,12 @@ class MagneticDeformationToDB(FiretaskBase):
 
         Adapted from Bocarsly et al. 2017,
         doi: 10.1021/acs.chemmater.6b04729"""
-        import numpy as np
         lmn = nm_struct.lattice.matrix.T
         lm = m_struct.lattice.matrix.T
         lmn_i = np.linalg.inv(lmn)
         p = np.dot(lmn_i, lm)
         eta = 0.5 * (np.dot(p.T, p) - np.identity(3))
-        w, v = np.linalg.eig(eta)
+        w, _ = np.linalg.eig(eta)
         deformation = 100 * (1. / 3.) * np.sqrt(w[0] ** 2 + w[1] ** 2 + w[2] ** 2)
         return deformation
 
