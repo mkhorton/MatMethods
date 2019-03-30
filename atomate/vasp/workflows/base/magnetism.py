@@ -283,6 +283,61 @@ class MagneticOrderingsWF:
         user_incar_settings.update(c.get("user_incar_settings", {}))
         c["user_incar_settings"] = user_incar_settings
 
+        if self.include_non_magnetic:
+
+            # constrain all magnetic moments to be zero
+
+            non_magnetic_incar_settings = user_incar_settings.copy()
+            non_magnetic_incar_settings["ISPIN"] = 1
+
+            if not scan:
+
+                vis = MPRelaxSet(
+                    ordered_structure, user_incar_settings=non_magnetic_incar_settings
+                )
+
+                # relax
+                fws.append(
+                    OptimizeFW(
+                        self.sanitized_structure,
+                        vasp_input_set=vis,
+                        vasp_cmd=c["VASP_CMD"],
+                        db_file=c["DB_FILE"],
+                        max_force_threshold=0.05,
+                        half_kpts_first_relax=False,
+                        name=name + " optimize",
+                    )
+                )
+
+                # static
+                fws.append(
+                    StaticFW(
+                        self.sanitized_structure,
+                        vasp_cmd=c["VASP_CMD"],
+                        db_file=c["DB_FILE"],
+                        name=name + " static",
+                        prev_calc_loc=True,
+                        parents=fws[-1],
+                    )
+                )
+
+            else:
+
+                non_magnetic_c = c.copy()
+                non_magnetic_c["user_incar_settings"]["ISPIN"] = 1
+
+                # wf_scan_opt is just a single FireWork so can append it directly
+                scan_fws = wf_scan_opt(self.sanitized_structure, c=non_magnetic_c).fws
+                # change name for consistency with non-SCAN
+                new_name = scan_fws[0].name.replace(
+                    "structure optimization", name + " optimize"
+                )
+                scan_fws[0].name = new_name
+                scan_fws[0].tasks[-1]["additional_fields"]["task_label"] = new_name
+                fws += scan_fws
+
+            analysis_parents.append(fws[-1])
+
         for idx, ordered_structure in enumerate(ordered_structures):
 
             analyzer = CollinearMagneticStructureAnalyzer(ordered_structure)
@@ -333,59 +388,6 @@ class MagneticOrderingsWF:
                 fws += scan_fws
 
             analysis_parents.append(fws[-1])
-
-        if self.include_non_magnetic:
-
-            # constrain all magnetic moments to be zero
-
-            non_magnetic_incar_settings = user_incar_settings.copy()
-            non_magnetic_incar_settings['ISPIN'] = 1
-
-            if not scan:
-
-                vis = MPRelaxSet(
-                    ordered_structure, user_incar_settings=non_magnetic_incar_settings
-                )
-
-                # relax
-                fws.append(
-                    OptimizeFW(
-                        self.sanitized_structure,
-                        vasp_input_set=vis,
-                        vasp_cmd=c["VASP_CMD"],
-                        db_file=c["DB_FILE"],
-                        max_force_threshold=0.05,
-                        half_kpts_first_relax=False,
-                        name=name + " optimize",
-                    )
-                )
-
-                # static
-                fws.append(
-                    StaticFW(
-                        self.sanitized_structure,
-                        vasp_cmd=c["VASP_CMD"],
-                        db_file=c["DB_FILE"],
-                        name=name + " static",
-                        prev_calc_loc=True,
-                        parents=fws[-1],
-                    )
-                )
-
-            else:
-
-                non_magnetic_c = c.copy()
-                non_magnetic_c['user_incar_settings']['ISPIN'] = 1
-
-                # wf_scan_opt is just a single FireWork so can append it directly
-                scan_fws = wf_scan_opt(self.sanitized_structure, c=non_magnetic_c).fws
-                # change name for consistency with non-SCAN
-                new_name = scan_fws[0].name.replace(
-                    "structure optimization", name + " optimize"
-                )
-                scan_fws[0].name = new_name
-                scan_fws[0].tasks[-1]["additional_fields"]["task_label"] = new_name
-                fws += scan_fws
 
         fw_analysis = Firework(
             MagneticOrderingsToDB(
